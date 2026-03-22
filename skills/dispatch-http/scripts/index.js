@@ -40,6 +40,7 @@ function parseArgs(args) {
     const key = args[i].replace(/^--/, "");
     if (key === "port" && args[i + 1]) parsed.port = parseInt(args[++i], 10);
     else if (key === "cwd" && args[i + 1]) parsed.cwd = args[++i];
+    else if ((key === "session-id" || key === "sessionId") && args[i + 1]) parsed.sessionId = args[++i];
   }
   return parsed;
 }
@@ -47,6 +48,7 @@ function parseArgs(args) {
 const args = parseArgs(process.argv.slice(2));
 const PORT = args.port || process.env.PORT || 3000;
 const CWD = args.cwd || process.env.CLAUDE_CWD || null;
+const SESSION_ID = args.sessionId || process.env.CLAUDE_SESSION_ID || null;
 const API_KEY = process.env.API_KEY;
 
 // API key auth middleware
@@ -95,7 +97,7 @@ app.post("/api/query", async (req, res) => {
     };
 
     if (cwd || CWD) options.cwd = cwd || CWD;
-    if (sessionId) options.resume = sessionId;
+    if (sessionId || SESSION_ID) options.resume = sessionId || SESSION_ID;
     if (systemPrompt) options.systemPrompt = systemPrompt;
 
     for await (const message of query({ prompt, options })) {
@@ -173,7 +175,7 @@ app.post("/api/query/stream", async (req, res) => {
     };
 
     if (cwd || CWD) options.cwd = cwd || CWD;
-    if (sessionId) options.resume = sessionId;
+    if (sessionId || SESSION_ID) options.resume = sessionId || SESSION_ID;
     if (systemPrompt) options.systemPrompt = systemPrompt;
 
     for await (const message of query({ prompt, options })) {
@@ -219,5 +221,8 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`Claude Agent API listening on port ${PORT}`);
   if (CWD) {
     console.log(`Working directory: ${CWD}`);
+  }
+  if (SESSION_ID) {
+    console.log(`Session ID: ${SESSION_ID}`);
   }
 });

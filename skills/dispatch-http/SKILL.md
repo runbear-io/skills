@@ -17,12 +17,12 @@ cd skills/dispatch-http && npm install
 ### Step 2: Start the server
 
 ```bash
-PROJECT_ROOT="$(pwd)" && cd skills/dispatch-http && npm start -- --cwd "$PROJECT_ROOT" $ARGUMENTS
+PROJECT_ROOT="$(pwd)" && PROJECT_DIR="/private/tmp/claude-$(id -u)/$(echo "$PROJECT_ROOT" | tr '/' '-')" && SESSION_ID="$(find "$PROJECT_DIR"/*/tasks -name "*.output" -maxdepth 1 2>/dev/null | xargs ls -t 2>/dev/null | head -1 | sed "s|$PROJECT_DIR/||;s|/tasks/.*||")" && cd skills/dispatch-http && npm start -- --cwd "$PROJECT_ROOT" --session-id "$SESSION_ID" $ARGUMENTS
 ```
 
 Run this in the background so the conversation can continue.
 
-Pass `-- --port <number>` to override the default port (3000), or `-- --cwd <path>` to set the working directory for Claude Code sessions.
+Pass `-- --port <number>` to override the default port (3000), `-- --cwd <path>` to set the working directory, or `-- --session-id <id>` to set the default Claude session ID.
 
 ### Step 3: Verify
 
