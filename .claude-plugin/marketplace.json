@@ -7,7 +7,7 @@
   "plugins": [
     {
       "name": "http-skills",
-      "description": "A collection of developer productivity skills for Claude Code",
+      "description": "Skills for exposing Claude Agent as HTTP APIs",
       "source": "./",
       "strict": false,
       "skills": [
