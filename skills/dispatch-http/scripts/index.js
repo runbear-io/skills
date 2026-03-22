@@ -49,14 +49,14 @@ const args = parseArgs(process.argv.slice(2));
 const PORT = args.port || process.env.PORT || 3000;
 const CWD = args.cwd || process.env.CLAUDE_CWD || null;
 const SESSION_ID = args.sessionId || process.env.CLAUDE_SESSION_ID || null;
-const API_KEY = process.env.API_KEY;
+const DISPATCH_HTTP_API_KEY = process.env.DISPATCH_HTTP_API_KEY;
 
 // API key auth middleware
 function authenticate(req, res, next) {
-  if (!API_KEY) return next(); // skip if no key configured
+  if (!DISPATCH_HTTP_API_KEY) return next(); // skip if no key configured
 
   const header = req.headers.authorization;
-  if (!header || header !== `Bearer ${API_KEY}`) {
+  if (!header || header !== `Bearer ${DISPATCH_HTTP_API_KEY}`) {
     return res.status(401).json({ error: "Unauthorized" });
   }
   next();

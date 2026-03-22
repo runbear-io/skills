@@ -44,5 +44,5 @@ Request body: `prompt` (required), `cwd`, `sessionId`, `allowedTools`, `systemPr
 ## Gotchas
 
 - The server binds to `0.0.0.0`, not `127.0.0.1`. It accepts connections from any interface.
-- Auth is **off by default**. Set `API_KEY` env var to enable Bearer token auth.
+- Auth is **off by default**. Set `DISPATCH_HTTP_API_KEY` env var to enable Bearer token auth.
 - The Agent SDK inherits local Claude Code authentication. No `ANTHROPIC_API_KEY` needed if Claude Code is already authenticated on the machine.

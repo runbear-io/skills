@@ -36,5 +36,5 @@ Expect `{"ok":true}`.
 ## Gotchas
 
 - The public URL changes on every restart.
-- Anyone with the URL can access the API. Set the `API_KEY` env var on the dispatch-http server to require Bearer token auth.
+- Anyone with the URL can access the API. Set the `DISPATCH_HTTP_API_KEY` env var on the dispatch-http server to require Bearer token auth.
 - Cloudflare quick tunnels are meant for development and testing, not production.
