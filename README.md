@@ -1,4 +1,4 @@
-# Runbear Agent Skills
+# Runbear Skills
 
 Skills for exposing Claude Agent as HTTP APIs.
 
