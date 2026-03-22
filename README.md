@@ -12,8 +12,8 @@ Skills for exposing Claude Agent as HTTP APIs.
 ## Installation
 
 ```bash
-/plugin marketplace add runbear/skills
-/plugin install http-skills@runbear-agent-skills
+/plugin marketplace add runbear-io/skills
+/plugin install http-skills@runbear-skills
 ```
 
 ## Usage
