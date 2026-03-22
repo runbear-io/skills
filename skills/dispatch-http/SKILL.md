@@ -11,14 +11,16 @@ description: Start the Claude Agent HTTP API server that exposes Claude Code via
 ### Step 1: Install dependencies
 
 ```bash
-cd skills/dispatch-http && npm install
+cd "$SKILL_DIR" && npm install
 ```
 
 ### Step 2: Start the server
 
 ```bash
-PROJECT_ROOT="$(pwd)" && PROJECT_DIR="/private/tmp/claude-$(id -u)/$(echo "$PROJECT_ROOT" | tr '/' '-')" && SESSION_ID="$(find "$PROJECT_DIR"/*/tasks -name "*.output" -maxdepth 1 2>/dev/null | xargs ls -t 2>/dev/null | head -1 | sed "s|$PROJECT_DIR/||;s|/tasks/.*||")" && cd skills/dispatch-http && npm start -- --cwd "$PROJECT_ROOT" --session-id "$SESSION_ID" $ARGUMENTS
+PROJECT_DIR="/private/tmp/claude-$(id -u)/$(echo "$PROJECT_ROOT" | tr '/' '-')" && SESSION_ID="$(find "$PROJECT_DIR"/*/tasks -name "*.output" -maxdepth 1 2>/dev/null | xargs ls -t 2>/dev/null | head -1 | sed "s|$PROJECT_DIR/||;s|/tasks/.*||")" && cd "$SKILL_DIR" && npm start -- --cwd "$PROJECT_ROOT" --session-id "$SESSION_ID" $ARGUMENTS
 ```
+
+Where `SKILL_DIR` is the base directory shown above and `PROJECT_ROOT` is the Claude Code session's working directory.
 
 Run this in the background so the conversation can continue.
 
@@ -44,4 +46,3 @@ Request body: `prompt` (required), `cwd`, `sessionId`, `allowedTools`, `systemPr
 - The server binds to `0.0.0.0`, not `127.0.0.1`. It accepts connections from any interface.
 - Auth is **off by default**. Set `API_KEY` env var to enable Bearer token auth.
 - The Agent SDK inherits local Claude Code authentication. No `ANTHROPIC_API_KEY` needed if Claude Code is already authenticated on the machine.
-- `npm run tunnel` starts both the server and a Cloudflare quick tunnel. Requires `cloudflared` installed. The URL changes on every restart.

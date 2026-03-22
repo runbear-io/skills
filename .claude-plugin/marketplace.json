@@ -1,17 +1,18 @@
 {
-  "name": "runbear-skills",
+  "name": "runbear-agent-skills",
   "owner": {
     "name": "Runbear",
     "email": "contact@runbear.io"
   },
   "plugins": [
     {
-      "name": "dispatch-http-skills",
+      "name": "http-skills",
       "description": "A collection of developer productivity skills for Claude Code",
       "source": "./",
       "strict": false,
       "skills": [
-        "./skills/dispatch-http"
+        "./skills/dispatch-http",
+        "./skills/expose-http"
       ]
     }
   ]
