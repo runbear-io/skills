@@ -14,6 +14,15 @@
         "./skills/dispatch-http",
         "./skills/expose-http"
       ]
+    },
+    {
+      "name": "shipyard",
+      "description": "Build and distribution tools",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./skills/bundle"
+      ]
     }
   ]
 }
