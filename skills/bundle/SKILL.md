@@ -36,24 +36,32 @@ After copying, list what was copied so the user can see the project files includ
 
 Read `.claude-plugin/marketplace.json` to find the project's own skills (listed in the `plugins[].skills` array). These are **project scope skills** and are always included.
 
-Then scan the user's installed skill/plugin directories for any **other** skills not in this project. Present a checklist of those external skills and ask the user which ones to include.
+Then collect all other available skills from these sources:
+- Check `~/.claude/plugins/` for globally installed plugins and look at their `marketplace.json` files
+- Check `$PROJECT_ROOT/.claude/skills/` for local scope skills (skill folders with a `SKILL.md` file)
+- Collect all skills that are NOT already listed as project scope skills
+- Exclude all skills belonging to the `shipyard` plugin (i.e., this plugin's own skills like `bundle`)
 
-To find installed skills, check:
-- `~/.claude/plugins/` for globally installed plugins
-- Look at `marketplace.json` files in those plugin directories
+Tell the user which project scope skills are always included, then use the `AskUserQuestion` tool with `multiSelect: true` to let the user pick additional skills:
 
-Display to the user:
+```json
+{
+  "questions": [
+    {
+      "question": "Which additional skills do you want to bundle?",
+      "header": "Skills",
+      "multiSelect": true,
+      "options": [
+        { "label": "<skill-name>", "description": "<skill description from SKILL.md frontmatter>" }
+      ]
+    }
+  ]
+}
 ```
-Project skills (always included):
-  - ./skills/dispatch-http
-  - ./skills/expose-http
 
-Other available skills:
-  [ ] <skill-name> — <description>
-  [ ] <skill-name> — <description>
-```
+Build the `options` array dynamically from the discovered non-project skills. Each option's `label` should be the skill name and `description` should come from the skill's `SKILL.md` frontmatter `description` field.
 
-Ask the user to confirm which additional skills they want bundled.
+If there are no additional skills available, skip this step and inform the user.
 
 ### Step 4: Copy selected skill folders to build folder
 
