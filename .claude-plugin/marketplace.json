@@ -6,9 +6,9 @@
   },
   "plugins": [
     {
-      "name": "http-skills",
+      "name": "dispatch-http",
       "description": "Skills for exposing Claude Agent as HTTP APIs",
-      "source": "./http-skills",
+      "source": "./dispatch-http",
       "skills": [
         "./skills/dispatch-http",
         "./skills/expose-http"

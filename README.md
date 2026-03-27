@@ -13,15 +13,15 @@ Skills for exposing Claude Agent as HTTP APIs.
 
 ```bash
 /plugin marketplace add runbear-io/skills
-/plugin install http-skills@runbear-skills
+/plugin install dispatch-http@runbear-skills
 ```
 
 ## Usage
 
 ```
-/http-skills:dispatch-http
-/http-skills:dispatch-http port 8080
-/http-skills:expose-http
+/dispatch-http:dispatch-http
+/dispatch-http:dispatch-http port 8080
+/dispatch-http:expose-http
 ```
 
 ## Project Structure
