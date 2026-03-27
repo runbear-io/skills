@@ -1,5 +1,5 @@
 const path = require("path");
-require("dotenv").config({ path: path.join(__dirname, "../.env") });
+require("dotenv").config();
 const express = require("express");
 const { query } = require("@anthropic-ai/claude-agent-sdk");
 const { TokenManager } = require("./token-manager");

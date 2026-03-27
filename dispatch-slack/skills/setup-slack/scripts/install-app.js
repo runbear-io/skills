@@ -7,10 +7,12 @@
 // Usage: node install-app.js [port]
 // Default port: 3333
 
+const path = require("path");
+// Resolve deps from sibling dispatch-slack skill
+module.paths.unshift(path.join(__dirname, "../../dispatch-slack/node_modules"));
 require("dotenv").config();
 const http = require("http");
 const fs = require("fs");
-const path = require("path");
 const { URL } = require("url");
 const { exec } = require("child_process");
 

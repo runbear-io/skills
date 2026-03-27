@@ -7,9 +7,11 @@
 // creates a Slack app with a manifest, generates an app-level token,
 // and stores all credentials in .env.
 
+const path = require("path");
+// Resolve deps from sibling dispatch-slack skill
+module.paths.unshift(path.join(__dirname, "../../dispatch-slack/node_modules"));
 require("dotenv").config();
 const fs = require("fs");
-const path = require("path");
 
 const ENV_FILE = path.join(process.cwd(), ".env");
 

@@ -4,6 +4,9 @@
 // Usage: node verify-token.js
 // Requires env: SLACK_CLIENT_ID, SLACK_CLIENT_SECRET, SLACK_REFRESH_TOKEN
 
+const path = require("path");
+// Resolve deps from sibling dispatch-slack skill
+module.paths.unshift(path.join(__dirname, "../../dispatch-slack/node_modules"));
 require("dotenv").config();
 const { WebClient } = require("@slack/web-api");
 

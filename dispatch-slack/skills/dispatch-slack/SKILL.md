@@ -31,10 +31,10 @@ lsof -ti:${PORT:-3000} 2>/dev/null
 ```
 If already running, inform the user and ask if they want to restart.
 
-2. Check that `.env` has the required vars:
+2. Check that `.env` in the project root (`$PROJECT_ROOT`) has the required vars:
 ```bash
-grep -c "^SLACK_BOT_TOKEN\|^SLACK_BOT_REFRESH_TOKEN" "$SKILL_DIR/.env"
-grep -c "^SLACK_APP_TOKEN" "$SKILL_DIR/.env"
+grep -c "^SLACK_BOT_TOKEN\|^SLACK_BOT_REFRESH_TOKEN" "$PROJECT_ROOT/.env"
+grep -c "^SLACK_APP_TOKEN" "$PROJECT_ROOT/.env"
 ```
 If missing, tell the user to run `/dispatch-slack:setup-slack` first.
 
