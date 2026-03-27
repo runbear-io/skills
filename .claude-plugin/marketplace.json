@@ -8,8 +8,7 @@
     {
       "name": "http-skills",
       "description": "Skills for exposing Claude Agent as HTTP APIs",
-      "source": "./",
-      "strict": false,
+      "source": "./http-skills",
       "skills": [
         "./skills/dispatch-http",
         "./skills/expose-http"
@@ -18,8 +17,7 @@
     {
       "name": "shipyard",
       "description": "Build and distribution tools",
-      "source": "./",
-      "strict": false,
+      "source": "./shipyard",
       "skills": [
         "./skills/bundle"
       ]
