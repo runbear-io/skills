@@ -15,6 +15,15 @@
       ]
     },
     {
+      "name": "dispatch-slack",
+      "description": "Skills for connecting Claude Agent to Slack",
+      "source": "./dispatch-slack",
+      "skills": [
+        "./skills/dispatch-slack",
+        "./skills/setup-slack"
+      ]
+    },
+    {
       "name": "shipyard",
       "description": "Build and distribution tools",
       "source": "./shipyard",
