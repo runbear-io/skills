@@ -2,21 +2,20 @@
 
 Skills for exposing Claude Agent via HTTP and Slack.
 
-## Plugins
+## Table of Contents
 
-### dispatch-http
+- [Use Cases](#use-cases)
+- [Installation](#installation)
+- [dispatch-http](#dispatch-http)
+- [dispatch-slack](#dispatch-slack)
+- [License](#license)
 
-| Skill | Description |
-|-------|-------------|
-| `dispatch-http` | Start an Express server that exposes Claude Code/Cowork via REST endpoints |
-| `expose-http` | Expose the local dispatch-http server to the internet via a Cloudflare quick tunnel |
+## Use Cases
 
-### dispatch-slack
-
-| Skill | Description |
-|-------|-------------|
-| `dispatch-slack` | Start the Slack bot server that connects Claude Code to Slack via Socket Mode |
-| `setup-slack` | Create and configure a Slack bot app with OAuth token rotation |
+- **Introduce a Claude Code project to team members** — Let your team interact with a project through Slack without needing Claude Code installed locally
+- **Interact with a Claude Code project running on a Mac Mini** — Access a headless Claude Code instance remotely via HTTP or Slack
+- **Query a service that uses Claude Code as backend** — Expose Claude Code as a REST API for other services to consume
+- **Use Siri to command Claude Code** — Chain Siri Shortcuts with the HTTP API to control Claude Code by voice
 
 ## Installation
 
@@ -26,49 +25,47 @@ Skills for exposing Claude Agent via HTTP and Slack.
 /plugin install dispatch-slack@runbear-skills
 ```
 
-## Usage
+## dispatch-http
+
+Expose Claude Code as REST API endpoints.
+
+| Skill | Description |
+|-------|-------------|
+| `dispatch-http` | Start an Express server that exposes Claude Code/Cowork via REST endpoints |
+| `expose-http` | Expose the local dispatch-http server to the internet via a Cloudflare quick tunnel |
+
+### Usage
 
 ```
 /dispatch-http:dispatch-http
 /dispatch-http:dispatch-http port 8080
 /dispatch-http:expose-http
+```
 
+## dispatch-slack
+
+Connect Claude Code to Slack via Socket Mode. Supports streaming responses.
+
+| Skill | Description |
+|-------|-------------|
+| `dispatch-slack` | Start/stop the Slack bot server that connects Claude Code to Slack |
+| `setup-slack` | Create and configure a Slack bot app with OAuth token rotation |
+
+### Usage
+
+```
 /dispatch-slack:setup-slack
 /dispatch-slack:dispatch-slack
 /dispatch-slack:dispatch-slack start /path/to/project
+/dispatch-slack:dispatch-slack stop
 ```
 
-## Project Structure
+### Running modes
 
-```
-.claude-plugin/
-  marketplace.json
-dispatch-http/
-  skills/
-    dispatch-http/
-      SKILL.md
-      package.json
-      scripts/index.js
-    expose-http/
-      SKILL.md
-dispatch-slack/
-  skills/
-    dispatch-slack/
-      SKILL.md
-      package.json
-      scripts/index.js, slack-bot.js, token-manager.js, set-always-online.js
-    setup-slack/
-      SKILL.md
-      scripts/create-slack-app.js, install-app.js, ...
-      references/architecture.md, slack-app-setup.md, token-rotation.md
-```
+The `dispatch-slack` skill supports two modes:
 
-## Adding New Skills
-
-1. Create a new directory under `<plugin>/skills/`
-2. Add a `SKILL.md` file with frontmatter (`description`) and instructions
-3. Add the skill path to `marketplace.json` under the plugin's `skills` array
-4. Update this README
+- **Local** — Run directly on the host machine. Uses local Claude Code authentication.
+- **Docker** — Run in a container for sandboxed filesystem access. Requires `CLAUDE_CODE_OAUTH_TOKEN` (generate with `claude setup-token`) or `ANTHROPIC_API_KEY` in `.env`.
 
 ## License
 
