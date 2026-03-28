@@ -1,12 +1,12 @@
 ---
-description: Start or stop the Slack bot server that connects local Claude Code to Slack. Use when the user wants to run the bot, start the server, connect to Slack, stop the bot, kill the server, or disconnect from Slack.
+description: Start or stop the Discord bot server that connects local Claude Code to Discord. Use when the user wants to run the bot, start the server, connect to Discord, stop the bot, kill the server, or disconnect from Discord.
 argument-hint: "[start|stop|restart|status] [working-directory]"
 allowed-tools: Bash, Read, Grep, Glob
 ---
 
-# Dispatch Slack
+# Dispatch Discord
 
-Start, stop, restart, or check the status of the Slack bot server, which connects local Claude Code to Slack via the Agent SDK.
+Start, stop, restart, or check the status of the Discord bot server, which connects local Claude Code to Discord via the Agent SDK.
 
 The server entry point is `scripts/index.js`. The default port is `3000` (override with `--port <number>` or `PORT` env var).
 
@@ -17,16 +17,16 @@ Parse `$ARGUMENTS` for:
 2. **Working directory**: An optional path passed to the server — the directory where the bot's Claude Code instance will operate.
 
 Examples:
-- `/dispatch-slack:dispatch-slack start /Users/me/my-project`
-- `/dispatch-slack:dispatch-slack stop`
-- `/dispatch-slack:dispatch-slack` (defaults to start)
+- `/dispatch-discord:dispatch start /Users/me/my-project`
+- `/dispatch-discord:dispatch stop`
+- `/dispatch-discord:dispatch` (defaults to start)
 
 ## Mode Selection
 
 Before executing the `start` command, ask the user which mode to run in:
 
 1. **Local** — Run directly on the host machine. Simple, uses local Claude Code auth.
-2. **Docker** — Run in a container. The Claude subprocess is sandboxed and can only access files mounted into `/workspace`. Requires Docker to be installed.
+2. **Docker** — Run in a container. The Claude subprocess is sandboxed. Requires Docker and `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` in `.env`.
 
 If the user does not specify, default to **local**.
 
@@ -44,15 +44,9 @@ If already running, inform the user and ask if they want to restart.
 
 2. Check that `.env` in the project root (`$PROJECT_ROOT`) has the required vars:
 ```bash
-grep -c "^SLACK_BOT_TOKEN\|^SLACK_BOT_REFRESH_TOKEN" "$PROJECT_ROOT/.env"
-grep -c "^SLACK_APP_TOKEN" "$PROJECT_ROOT/.env"
+grep -c "^DISCORD_BOT_TOKEN" "$PROJECT_ROOT/.env"
 ```
-If missing, tell the user to run `/dispatch-slack:setup-slack` first.
-
-3. Set the bot's presence to online:
-```bash
-node "$SKILL_DIR/scripts/set-always-online.js" true
-```
+If missing, tell the user to run `/dispatch-discord:init` first.
 
 #### Local mode
 
@@ -73,7 +67,7 @@ PROJECT_DIR="/private/tmp/claude-$(id -u)/$(echo "$PROJECT_ROOT" | tr '/' '-')" 
 
 Run this in the background so the conversation can continue.
 
-Wait a few seconds, then check output to confirm "Slack bot started" appears.
+Wait a few seconds, then check output to confirm "Discord bot started" appears.
 
 #### Docker mode
 
@@ -83,18 +77,11 @@ docker compose version
 ```
 If not installed, tell the user to install Docker and try again, or use local mode instead.
 
-2. **Authentication** — Check that `.env` has a credential the container can use. Check in this order:
-   - `CLAUDE_CODE_OAUTH_TOKEN` — preferred for Docker (works on all platforms)
-   - `ANTHROPIC_API_KEY` — also works
-
+2. **Authentication** — Check that `.env` has a credential the container can use:
 ```bash
 grep -c "^CLAUDE_CODE_OAUTH_TOKEN\|^ANTHROPIC_API_KEY" "$PROJECT_ROOT/.env"
 ```
-
-If neither is set, tell the user to run `claude setup-token` on the host machine. This opens a browser OAuth flow and generates a long-lived token (`sk-ant-oat01-...`). Then add it to `.env`:
-```
-CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...
-```
+If neither is set, tell the user to run `claude setup-token` on the host machine and add `CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...` to `.env`.
 
 3. Copy `.env` into the skill directory so Docker can access it:
 ```bash
@@ -113,28 +100,18 @@ Replace `<workspace-dir>` with the **absolute path** the user chose (default: `$
 ```bash
 docker compose -f "$SKILL_DIR/docker-compose.yml" logs --tail 20
 ```
-Confirm "Slack bot started" appears in the logs.
+Confirm "Discord bot started" appears in the logs.
 
 ### stop
 
 #### Local mode
-1. Set the bot's presence to offline:
-```bash
-node "$SKILL_DIR/scripts/set-always-online.js" false
-```
-
-2. Kill the server:
+1. Kill the server:
 ```bash
 kill $(lsof -ti:${PORT:-3000}) 2>/dev/null
 ```
 
 #### Docker mode
-1. Set the bot's presence to offline:
-```bash
-node "$SKILL_DIR/scripts/set-always-online.js" false
-```
-
-2. Stop the container:
+1. Stop the container:
 ```bash
 cd "$SKILL_DIR" && docker compose down
 ```
@@ -159,15 +136,14 @@ docker compose -f "$SKILL_DIR/docker-compose.yml" ps
 ## API
 
 **POST /api/query** — run a prompt, return full JSON response.
-**POST /api/query/stream** — run a prompt, stream via SSE.
-**POST /api/slack/init** — start Slack bot at runtime with a refresh token.
 
-Request body for query endpoints: `prompt` (required), `cwd`, `sessionId`, `allowedTools`, `systemPrompt`.
+Request body: `prompt` (required), `cwd`, `sessionId`, `allowedTools`, `systemPrompt`.
 
 ## Gotchas
 
 - The server binds to `0.0.0.0`, not `127.0.0.1`. It accepts connections from any interface.
 - **Local mode**: The Agent SDK inherits local Claude Code authentication. No API key needed.
-- **Docker mode**: Requires `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` in `.env`. Generate an OAuth token with `claude setup-token`. The `~/.claude` directory is also mounted read-only (useful on Linux where credentials are file-based, but insufficient on macOS where auth is stored in Keychain).
-- Sessions are tracked per Slack thread. First message creates a new session; replies resume it.
-- In Docker mode, the Claude subprocess can only access files under `/workspace`.
+- **Docker mode**: Requires `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` in `.env`. Generate an OAuth token with `claude setup-token`. The `~/.claude` directory is also mounted (useful on Linux where credentials are file-based, but insufficient on macOS where auth is stored in Keychain).
+- Sessions are tracked per Discord thread. First message creates a new session; replies resume it.
+- Discord messages have a 2000 character limit. Long responses are split across multiple messages.
+- Responses stream progressively by editing the reply message (~1 edit per second to stay within Discord rate limits).

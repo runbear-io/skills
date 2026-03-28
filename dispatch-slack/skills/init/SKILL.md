@@ -89,7 +89,7 @@ node ${CLAUDE_SKILL_DIR}/scripts/store-app-token.js <xapp-token>
 
 ### Step 8: Start the bot
 
-Tell the user to run `/dispatch-slack:dispatch-slack` to start the bot.
+Tell the user to run `/dispatch-slack:dispatch` to start the bot.
 
 ## Customization
 

@@ -10,8 +10,8 @@
       "description": "Skills for exposing Claude Agent as HTTP APIs",
       "source": "./dispatch-http",
       "skills": [
-        "./skills/dispatch-http",
-        "./skills/expose-http"
+        "./skills/dispatch",
+        "./skills/expose"
       ]
     },
     {
@@ -19,8 +19,8 @@
       "description": "Skills for connecting Claude Agent to Slack",
       "source": "./dispatch-slack",
       "skills": [
-        "./skills/dispatch-slack",
-        "./skills/setup-slack"
+        "./skills/dispatch",
+        "./skills/init"
       ]
     },
     {
@@ -28,8 +28,8 @@
       "description": "Skills for connecting Claude Agent to Discord",
       "source": "./dispatch-discord",
       "skills": [
-        "./skills/dispatch-discord",
-        "./skills/setup-discord"
+        "./skills/dispatch",
+        "./skills/init"
       ]
     },
     {

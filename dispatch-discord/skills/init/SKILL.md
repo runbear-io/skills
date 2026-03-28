@@ -59,7 +59,7 @@ This outputs a URL. Ask the user to open it in their browser, select a server, a
 
 ### Step 7: Start the bot
 
-Tell the user to run `/dispatch-discord:dispatch-discord` to start the bot.
+Tell the user to run `/dispatch-discord:dispatch` to start the bot.
 
 ## Customization
 
