@@ -1,9 +1,13 @@
 const { App } = require("@slack/bolt");
+const { WebClient } = require("@slack/web-api");
 const { query } = require("@anthropic-ai/claude-agent-sdk");
 const { TokenManager } = require("./token-manager");
 
 // Track sessions per Slack thread (channel:thread_ts -> sessionId)
 const threadSessions = new Map();
+
+// Throttle interval for stream appends (ms)
+const STREAM_APPEND_INTERVAL = 300;
 
 function createSlackBot({ tokenManager, teamId, botToken, cwd }) {
   const token = botToken
@@ -18,35 +22,28 @@ function createSlackBot({ tokenManager, teamId, botToken, cwd }) {
   });
 
   // Respond to messages that mention the bot or are in DMs
-  app.event("app_mention", async ({ event, say }) => {
-    await handleMessage(event, say, { tokenManager, teamId, botToken, cwd });
+  app.event("app_mention", async ({ event, say, client }) => {
+    await handleMessage(event, say, client, { tokenManager, teamId, botToken, cwd });
   });
 
-  app.event("message", async ({ event, say }) => {
+  app.event("message", async ({ event, say, client }) => {
     // Only respond to DMs (not channels — use app_mention for that)
     if (event.channel_type === "im" && !event.bot_id) {
-      await handleMessage(event, say, { tokenManager, teamId, botToken, cwd });
+      await handleMessage(event, say, client, { tokenManager, teamId, botToken, cwd });
     }
   });
 
   return app;
 }
 
-async function handleMessage(event, say, { tokenManager, teamId, botToken, cwd }) {
+async function handleMessage(event, say, client, { tokenManager, teamId, botToken, cwd }) {
   const threadTs = event.thread_ts || event.ts;
   const threadKey = `${event.channel}:${threadTs}`;
   const prompt = event.text.replace(/<@[A-Z0-9]+>/g, "").trim();
 
   if (!prompt) return;
 
-  // Post a thinking indicator
-  const thinking = await say({
-    text: ":hourglass_flowing_sand: Working on it...",
-    thread_ts: threadTs,
-  });
-
   try {
-    const messages = [];
     let sessionId = threadSessions.get(threadKey);
     let newSessionId = null;
 
@@ -62,8 +59,59 @@ async function handleMessage(event, say, { tokenManager, teamId, botToken, cwd }
     if (process.env.CLAUDE_SYSTEM_PROMPT)
       options.systemPrompt = process.env.CLAUDE_SYSTEM_PROMPT;
 
-    try {
-      for await (const message of query({ prompt, options })) {
+    // Start a Slack stream
+    const stream = await client.chat.startStream({
+      channel: event.channel,
+      thread_ts: threadTs,
+    });
+    const streamTs = stream.ts;
+
+    let fullText = "";
+    let lastAppendTime = 0;
+    let pendingAppend = null;
+
+    const appendToStream = async (text) => {
+      fullText = text;
+      const now = Date.now();
+      const timeSinceLastAppend = now - lastAppendTime;
+
+      if (timeSinceLastAppend >= STREAM_APPEND_INTERVAL) {
+        // Enough time has passed, append immediately
+        if (pendingAppend) {
+          clearTimeout(pendingAppend);
+          pendingAppend = null;
+        }
+        lastAppendTime = now;
+        try {
+          await client.chat.appendStream({
+            channel: event.channel,
+            ts: streamTs,
+            markdown_text: fullText,
+          });
+        } catch (err) {
+          console.error("Stream append error:", err.message);
+        }
+      } else if (!pendingAppend) {
+        // Schedule a deferred append
+        const delay = STREAM_APPEND_INTERVAL - timeSinceLastAppend;
+        pendingAppend = setTimeout(async () => {
+          pendingAppend = null;
+          lastAppendTime = Date.now();
+          try {
+            await client.chat.appendStream({
+              channel: event.channel,
+              ts: streamTs,
+              markdown_text: fullText,
+            });
+          } catch (err) {
+            console.error("Stream append error:", err.message);
+          }
+        }, delay);
+      }
+    };
+
+    const processStream = async (queryOptions) => {
+      for await (const message of query({ prompt, options: queryOptions })) {
         if (message.type === "system" && message.subtype === "init") {
           newSessionId = message.session_id;
         }
@@ -71,61 +119,44 @@ async function handleMessage(event, say, { tokenManager, teamId, botToken, cwd }
         if (message.type === "assistant" && message.message?.content) {
           for (const block of message.message.content) {
             if ("text" in block) {
-              messages.push(block.text);
+              await appendToStream(block.text);
             }
           }
         }
       }
+    };
+
+    try {
+      await processStream(options);
     } catch (err) {
       // If session resume failed, retry without resuming
       if (sessionId && err.message && err.message.includes("session")) {
         console.log(`Session ${sessionId} not found, starting fresh`);
         threadSessions.delete(threadKey);
         delete options.resume;
-        for await (const message of query({ prompt, options })) {
-          if (message.type === "system" && message.subtype === "init") {
-            newSessionId = message.session_id;
-          }
-          if (message.type === "assistant" && message.message?.content) {
-            for (const block of message.message.content) {
-              if ("text" in block) {
-                messages.push(block.text);
-              }
-            }
-          }
-        }
+        fullText = "";
+        await processStream(options);
       } else {
         throw err;
       }
+    }
+
+    // Flush any pending append
+    if (pendingAppend) {
+      clearTimeout(pendingAppend);
+      pendingAppend = null;
     }
 
     if (newSessionId) {
       threadSessions.set(threadKey, newSessionId);
     }
 
-    const response = messages[messages.length - 1] || "No response generated.";
-
-    // Slack messages have a 4000 char limit for text
-    const chunks = splitMessage(response, 3900);
-
-    // Delete the thinking indicator
-    try {
-      const tok = botToken
-        ? botToken
-        : await tokenManager.getAccessToken(teamId);
-      const { WebClient } = require("@slack/web-api");
-      const client = new WebClient(tok);
-      await client.chat.delete({
-        channel: event.channel,
-        ts: thinking.ts,
-      });
-    } catch {
-      // Ignore if we can't delete (e.g., no permission)
-    }
-
-    for (const chunk of chunks) {
-      await say({ text: chunk, thread_ts: threadTs });
-    }
+    // Stop the stream with the final text
+    await client.chat.stopStream({
+      channel: event.channel,
+      ts: streamTs,
+      markdown_text: fullText || "No response generated.",
+    });
   } catch (err) {
     console.error("Slack handler error:", err);
     await say({
@@ -133,27 +164,6 @@ async function handleMessage(event, say, { tokenManager, teamId, botToken, cwd }
       thread_ts: threadTs,
     });
   }
-}
-
-function splitMessage(text, maxLength) {
-  if (text.length <= maxLength) return [text];
-
-  const chunks = [];
-  let remaining = text;
-  while (remaining.length > 0) {
-    if (remaining.length <= maxLength) {
-      chunks.push(remaining);
-      break;
-    }
-    // Try to split at a newline
-    let splitIdx = remaining.lastIndexOf("\n", maxLength);
-    if (splitIdx === -1 || splitIdx < maxLength / 2) {
-      splitIdx = maxLength;
-    }
-    chunks.push(remaining.slice(0, splitIdx));
-    remaining = remaining.slice(splitIdx).replace(/^\n/, "");
-  }
-  return chunks;
 }
 
 module.exports = { createSlackBot };
