@@ -77,7 +77,14 @@ async function handleMessage(event, say, client, { tokenManager, teamId, botToke
       ? `${userPrompt}\n\n${slackHints}`
       : slackHints;
 
-    // Start a Slack stream
+    // Post a status message that will be updated during tool use
+    const statusMsg = await say({
+      text: ":hourglass_flowing_sand: Working on it...",
+      thread_ts: threadTs,
+    });
+    const statusTs = statusMsg.ts;
+
+    // Start a Slack stream for the actual response
     const stream = await client.chat.startStream({
       channel: event.channel,
       thread_ts: threadTs,
@@ -88,6 +95,66 @@ async function handleMessage(event, say, client, { tokenManager, teamId, botToke
     let flushedLength = 0;
     let lastAppendTime = 0;
     let pendingAppend = null;
+    let lastToolStatus = "";
+    let displayPhase = "init";
+    let activityTimer = null;
+    let phaseStartTime = Date.now();
+    let activityTick = 0;
+    let statusDeleted = false;
+    const REPHRASE_INTERVAL = 5000;
+
+    const updateStatus = async (text) => {
+      if (statusDeleted) return;
+      try {
+        await client.chat.update({
+          channel: event.channel,
+          ts: statusTs,
+          text,
+        });
+      } catch (err) {
+        console.error("Status update error:", err.message);
+      }
+    };
+
+    const deleteStatus = async () => {
+      if (statusDeleted) return;
+      statusDeleted = true;
+      clearActivityTimer();
+      try {
+        await client.chat.delete({
+          channel: event.channel,
+          ts: statusTs,
+        });
+      } catch (err) {
+        console.error("Status delete error:", err.message);
+      }
+    };
+
+    const resetActivityTimer = () => {
+      clearActivityTimer();
+      phaseStartTime = Date.now();
+      activityTick = 0;
+      activityTimer = setInterval(async () => {
+        activityTick++;
+        const elapsed = Math.round((Date.now() - phaseStartTime) / 1000);
+        const prefix = getStillWorkingPrefix(activityTick, elapsed);
+        if (displayPhase === "tool") {
+          await updateStatus(`${prefix}\n${lastToolStatus}`);
+        } else {
+          await updateStatus(prefix);
+        }
+      }, REPHRASE_INTERVAL);
+    };
+
+    const clearActivityTimer = () => {
+      if (activityTimer) {
+        clearInterval(activityTimer);
+        activityTimer = null;
+      }
+    };
+
+    // Start the timer so the initial status doesn't go stale
+    resetActivityTimer();
 
     const flushDelta = async () => {
       const delta = fullText.slice(flushedLength);
@@ -110,7 +177,6 @@ async function handleMessage(event, say, client, { tokenManager, teamId, botToke
       const timeSinceLastAppend = now - lastAppendTime;
 
       if (timeSinceLastAppend >= STREAM_APPEND_INTERVAL) {
-        // Enough time has passed, append immediately
         if (pendingAppend) {
           clearTimeout(pendingAppend);
           pendingAppend = null;
@@ -118,7 +184,6 @@ async function handleMessage(event, say, client, { tokenManager, teamId, botToke
         lastAppendTime = now;
         await flushDelta();
       } else if (!pendingAppend) {
-        // Schedule a deferred append
         const delay = STREAM_APPEND_INTERVAL - timeSinceLastAppend;
         pendingAppend = setTimeout(async () => {
           pendingAppend = null;
@@ -136,12 +201,26 @@ async function handleMessage(event, say, client, { tokenManager, teamId, botToke
 
         if (message.type === "assistant" && message.message?.content) {
           for (const block of message.message.content) {
+            // Tool use — update status message
+            if ("name" in block) {
+              displayPhase = "tool";
+              lastToolStatus = describeToolUse(block);
+              await updateStatus(`:hourglass_flowing_sand: Working on it...\n${lastToolStatus}`);
+              resetActivityTimer();
+            }
+
+            // Text — stream to the response, delete status when first text arrives
             if ("text" in block) {
+              if (!statusDeleted) {
+                await deleteStatus();
+              }
+              displayPhase = "text";
               await appendToStream(markdownToMrkdwn(block.text));
             }
           }
         }
       }
+      clearActivityTimer();
     };
 
     try {
@@ -154,11 +233,16 @@ async function handleMessage(event, say, client, { tokenManager, teamId, botToke
         delete options.resume;
         fullText = "";
         flushedLength = 0;
+        displayPhase = "init";
+        resetActivityTimer();
         await processStream(options);
       } else {
         throw err;
       }
     }
+
+    // Clean up status message if still visible
+    await deleteStatus();
 
     // Flush any pending append
     if (pendingAppend) {
@@ -180,12 +264,75 @@ async function handleMessage(event, say, client, { tokenManager, teamId, botToke
         : {}),
     });
   } catch (err) {
+    clearActivityTimer();
+    await deleteStatus();
     console.error("Slack handler error:", err);
     await say({
       text: `:x: Error: ${err.message}`,
       thread_ts: threadTs,
     });
   }
+}
+
+const STILL_WORKING_PREFIXES = [
+  ":hourglass_flowing_sand: Still working on it…",
+  ":hourglass: Hang tight, still going…",
+  ":hourglass_flowing_sand: Taking a moment…",
+  ":hourglass: Still at it…",
+  ":hourglass_flowing_sand: Almost there, still processing…",
+  ":hourglass: Working through this…",
+  ":hourglass_flowing_sand: Bear with me…",
+  ":hourglass: Still crunching…",
+];
+
+function getStillWorkingPrefix(tick, elapsedSec) {
+  const idx = (tick - 1) % STILL_WORKING_PREFIXES.length;
+  return `${STILL_WORKING_PREFIXES[idx]} (${elapsedSec}s)`;
+}
+
+function describeToolUse(block) {
+  const input = block.input || {};
+  switch (block.name) {
+    case "Read":
+      return `:mag: Reading \`${shortenPath(input.file_path)}\``;
+    case "Write":
+      return `:pencil: Writing \`${shortenPath(input.file_path)}\``;
+    case "Edit":
+      return `:pencil2: Editing \`${shortenPath(input.file_path)}\``;
+    case "Glob":
+      return `:open_file_folder: Searching files matching \`${input.pattern || "..."}\``;
+    case "Grep":
+      return `:mag_right: Searching for \`${truncate(input.pattern, 40)}\``;
+    case "Bash": {
+      const cmd = truncate((input.command || "").split("\n")[0], 60);
+      return `:gear: Running \`${cmd}\``;
+    }
+    case "WebSearch":
+      return `:globe_with_meridians: Searching the web for \`${truncate(input.query, 50)}\``;
+    case "WebFetch":
+      return `:globe_with_meridians: Fetching \`${truncate(input.url, 60)}\``;
+    case "Agent":
+      return `:robot_face: Spawning agent: ${truncate(input.description || input.prompt, 50)}`;
+    case "NotebookEdit":
+      return `:notebook: Editing notebook \`${shortenPath(input.notebook_path)}\``;
+    default: {
+      const detail = input.query || input.prompt || input.pattern || input.url || input.file_path;
+      if (detail) return `:wrench: ${block.name}: \`${truncate(String(detail), 50)}\``;
+      return `:wrench: ${block.name}`;
+    }
+  }
+}
+
+function shortenPath(filePath) {
+  if (!filePath) return "...";
+  const parts = filePath.split("/");
+  if (parts.length <= 3) return filePath;
+  return ".../" + parts.slice(-2).join("/");
+}
+
+function truncate(str, max) {
+  if (!str) return "...";
+  return str.length > max ? str.slice(0, max - 1) + "…" : str;
 }
 
 /**
