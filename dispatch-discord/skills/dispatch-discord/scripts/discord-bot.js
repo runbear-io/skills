@@ -62,8 +62,26 @@ async function handleMessage(message, content, { cwd }) {
 
     if (sessionId) options.resume = sessionId;
     if (cwd || process.env.CLAUDE_CWD) options.cwd = cwd || process.env.CLAUDE_CWD;
-    if (process.env.CLAUDE_SYSTEM_PROMPT)
-      options.systemPrompt = process.env.CLAUDE_SYSTEM_PROMPT;
+
+    const discordHints = [
+      "You are responding in Discord. Discord does not render markdown tables.",
+      "When you need to display tabular data, use ASCII text tables with + - | characters wrapped in a code block.",
+      "Example:",
+      "```",
+      "+--------+-------+--------+",
+      "| Name   | Role  | Status |",
+      "+--------+-------+--------+",
+      "| Alice  | Admin | Active |",
+      "| Bob    | User  | Idle   |",
+      "+--------+-------+--------+",
+      "```",
+      "Keep responses concise. Discord messages have a 2000 character limit.",
+    ].join("\n");
+
+    const userPrompt = process.env.CLAUDE_SYSTEM_PROMPT || "";
+    options.systemPrompt = userPrompt
+      ? `${userPrompt}\n\n${discordHints}`
+      : discordHints;
 
     let latestText = "";
     let toolNames = [];
