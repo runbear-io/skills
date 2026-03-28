@@ -62,17 +62,40 @@ async function handleMessage(event, say, { tokenManager, teamId, botToken, cwd }
     if (process.env.CLAUDE_SYSTEM_PROMPT)
       options.systemPrompt = process.env.CLAUDE_SYSTEM_PROMPT;
 
-    for await (const message of query({ prompt, options })) {
-      if (message.type === "system" && message.subtype === "init") {
-        newSessionId = message.session_id;
-      }
+    try {
+      for await (const message of query({ prompt, options })) {
+        if (message.type === "system" && message.subtype === "init") {
+          newSessionId = message.session_id;
+        }
 
-      if (message.type === "assistant" && message.message?.content) {
-        for (const block of message.message.content) {
-          if ("text" in block) {
-            messages.push(block.text);
+        if (message.type === "assistant" && message.message?.content) {
+          for (const block of message.message.content) {
+            if ("text" in block) {
+              messages.push(block.text);
+            }
           }
         }
+      }
+    } catch (err) {
+      // If session resume failed, retry without resuming
+      if (sessionId && err.message && err.message.includes("session")) {
+        console.log(`Session ${sessionId} not found, starting fresh`);
+        threadSessions.delete(threadKey);
+        delete options.resume;
+        for await (const message of query({ prompt, options })) {
+          if (message.type === "system" && message.subtype === "init") {
+            newSessionId = message.session_id;
+          }
+          if (message.type === "assistant" && message.message?.content) {
+            for (const block of message.message.content) {
+              if ("text" in block) {
+                messages.push(block.text);
+              }
+            }
+          }
+        }
+      } else {
+        throw err;
       }
     }
 

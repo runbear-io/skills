@@ -21,9 +21,20 @@ Examples:
 - `/dispatch-slack:dispatch-slack stop`
 - `/dispatch-slack:dispatch-slack` (defaults to start)
 
+## Mode Selection
+
+Before executing the `start` command, ask the user which mode to run in:
+
+1. **Local** — Run directly on the host machine. Simple, uses local Claude Code auth.
+2. **Docker** — Run in a container. The Claude subprocess is sandboxed and can only access files mounted into `/workspace`. Requires Docker to be installed.
+
+If the user does not specify, default to **local**.
+
 ## Commands
 
 ### start
+
+#### Pre-checks (both modes)
 
 1. Check if the server is already running:
 ```bash
@@ -38,17 +49,19 @@ grep -c "^SLACK_APP_TOKEN" "$PROJECT_ROOT/.env"
 ```
 If missing, tell the user to run `/dispatch-slack:setup-slack` first.
 
-3. Install dependencies (if `node_modules/` is missing):
-```bash
-cd "$SKILL_DIR" && npm install
-```
-
-4. Set the bot's presence to online:
+3. Set the bot's presence to online:
 ```bash
 node "$SKILL_DIR/scripts/set-always-online.js" true
 ```
 
-5. Start the server in the background:
+#### Local mode
+
+1. Install dependencies (if `node_modules/` is missing):
+```bash
+cd "$SKILL_DIR" && npm install
+```
+
+2. Start the server in the background:
 ```bash
 PROJECT_DIR="/private/tmp/claude-$(id -u)/$(echo "$PROJECT_ROOT" | tr '/' '-')" && SESSION_ID="$(find "$PROJECT_DIR"/*/tasks -name "*.output" -maxdepth 1 2>/dev/null | xargs ls -t 2>/dev/null | head -1 | sed "s|$PROJECT_DIR/||;s|/tasks/.*||")" && cd "$SKILL_DIR" && npm start -- --cwd "$PROJECT_ROOT" --session-id "$SESSION_ID" $ARGUMENTS
 ```
@@ -57,8 +70,49 @@ Run this in the background so the conversation can continue.
 
 Wait a few seconds, then check output to confirm "Slack bot started" appears.
 
+#### Docker mode
+
+1. Check Docker is available:
+```bash
+docker compose version
+```
+If not installed, tell the user to install Docker and try again, or use local mode instead.
+
+2. **Authentication** — Check that `.env` has a credential the container can use. Check in this order:
+   - `CLAUDE_CODE_OAUTH_TOKEN` — preferred for Docker (works on all platforms)
+   - `ANTHROPIC_API_KEY` — also works
+
+```bash
+grep -c "^CLAUDE_CODE_OAUTH_TOKEN\|^ANTHROPIC_API_KEY" "$PROJECT_ROOT/.env"
+```
+
+If neither is set, tell the user to run `claude setup-token` on the host machine. This opens a browser OAuth flow and generates a long-lived token (`sk-ant-oat01-...`). Then add it to `.env`:
+```
+CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...
+```
+
+3. Copy `.env` into the skill directory so Docker can access it:
+```bash
+cp "$PROJECT_ROOT/.env" "$SKILL_DIR/.env"
+```
+
+4. Ask the user which directory to mount as the workspace. Default to `$PROJECT_ROOT`.
+
+5. Build and start with the workspace mounted:
+```bash
+cd "$SKILL_DIR" && WORKSPACE_PATH="<workspace-dir>" docker compose up -d --build
+```
+Replace `<workspace-dir>` with the **absolute path** the user chose (default: `$PROJECT_ROOT`). The project is mounted at the same path inside the container so Claude Code session keys match the host, enabling session continuity.
+
+6. Verify:
+```bash
+docker compose -f "$SKILL_DIR/docker-compose.yml" logs --tail 20
+```
+Confirm "Slack bot started" appears in the logs.
+
 ### stop
 
+#### Local mode
 1. Set the bot's presence to offline:
 ```bash
 node "$SKILL_DIR/scripts/set-always-online.js" false
@@ -69,16 +123,33 @@ node "$SKILL_DIR/scripts/set-always-online.js" false
 kill $(lsof -ti:${PORT:-3000}) 2>/dev/null
 ```
 
+#### Docker mode
+1. Set the bot's presence to offline:
+```bash
+node "$SKILL_DIR/scripts/set-always-online.js" false
+```
+
+2. Stop the container:
+```bash
+cd "$SKILL_DIR" && docker compose down
+```
+
 ### restart
 
-Stop then start (preserves any working directory argument).
+Stop then start (preserves mode and any working directory argument).
 
 ### status
 
+**Local:**
 ```bash
 lsof -ti:${PORT:-3000} 2>/dev/null
 ```
 If a PID is returned, the server is running. Otherwise it is stopped.
+
+**Docker:**
+```bash
+docker compose -f "$SKILL_DIR/docker-compose.yml" ps
+```
 
 ## API
 
@@ -91,5 +162,7 @@ Request body for query endpoints: `prompt` (required), `cwd`, `sessionId`, `allo
 ## Gotchas
 
 - The server binds to `0.0.0.0`, not `127.0.0.1`. It accepts connections from any interface.
-- The Agent SDK inherits local Claude Code authentication. No `ANTHROPIC_API_KEY` needed if Claude Code is already authenticated on the machine.
+- **Local mode**: The Agent SDK inherits local Claude Code authentication. No API key needed.
+- **Docker mode**: Requires `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` in `.env`. Generate an OAuth token with `claude setup-token`. The `~/.claude` directory is also mounted read-only (useful on Linux where credentials are file-based, but insufficient on macOS where auth is stored in Keychain).
 - Sessions are tracked per Slack thread. First message creates a new session; replies resume it.
+- In Docker mode, the Claude subprocess can only access files under `/workspace`.
