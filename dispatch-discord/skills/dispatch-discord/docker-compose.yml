@@ -1,0 +1,18 @@
+services:
+  dispatch-discord:
+    build: .
+    ports:
+      - "3000:3000"
+    env_file: .env
+    environment:
+      - CLAUDE_CWD=${WORKSPACE_PATH}
+    volumes:
+      # Mount project at the same path as on the host so session keys match
+      - ${WORKSPACE_PATH}:${WORKSPACE_PATH}
+
+      # Mount host's Claude Code sessions for session continuity
+      - /tmp:/tmp
+
+      # Mount local Claude Code config (useful on Linux where credentials are file-based)
+      - ~/.claude:/home/claude/.claude
+    restart: unless-stopped

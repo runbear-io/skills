@@ -24,6 +24,15 @@
       ]
     },
     {
+      "name": "dispatch-discord",
+      "description": "Skills for connecting Claude Agent to Discord",
+      "source": "./dispatch-discord",
+      "skills": [
+        "./skills/dispatch-discord",
+        "./skills/setup-discord"
+      ]
+    },
+    {
       "name": "shipyard",
       "description": "Build and distribution tools",
       "source": "./shipyard",
