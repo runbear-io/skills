@@ -1,5 +1,18 @@
+const fs = require("fs");
+const path = require("path");
 const { Client, GatewayIntentBits, Partials } = require("discord.js");
+const { AttachmentBuilder } = require("discord.js");
 const { query } = require("@anthropic-ai/claude-agent-sdk");
+
+// File extensions eligible for Discord attachment
+const ATTACHMENT_EXTENSIONS_LIST = [
+  ".pdf", ".md", ".txt", ".csv", ".json", ".xml", ".html", ".htm",
+  ".log", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf",
+  ".js", ".ts", ".py", ".rb", ".sh", ".bash", ".zsh",
+  ".c", ".cpp", ".h", ".java", ".go", ".rs", ".swift",
+  ".sql", ".graphql", ".proto", ".diff", ".patch",
+];
+const ATTACHMENT_EXTENSIONS = new Set(ATTACHMENT_EXTENSIONS_LIST);
 
 // Track sessions per Discord thread (channelId:threadId -> sessionId)
 const threadSessions = new Map();
@@ -77,6 +90,10 @@ async function handleMessage(message, content, { cwd }) {
       "+--------+-------+--------+",
       "```",
       "Keep responses concise. Discord messages have a 2000 character limit.",
+      "",
+      "IMPORTANT: Files you create or write will be automatically attached to your Discord reply.",
+      "When asked to generate a file (PDF, markdown, text, CSV, etc.), use the Write tool to create it.",
+      "Do NOT tell the user to find the file on disk — it will be sent to them as a Discord attachment.",
     ].join("\n");
 
     const userPrompt = process.env.CLAUDE_SYSTEM_PROMPT || "";
@@ -86,6 +103,7 @@ async function handleMessage(message, content, { cwd }) {
 
     let latestText = "";
     let toolNames = [];
+    let writtenFiles = [];
     let lastEditTime = 0;
     const EDIT_INTERVAL = 1200;
 
@@ -110,9 +128,17 @@ async function handleMessage(message, content, { cwd }) {
 
         if (msg.type === "assistant" && msg.message?.content) {
           for (const block of msg.message.content) {
-            // Tool use — update progress
+            // Tool use — update progress and track written files
             if ("name" in block) {
               toolNames.push(block.name);
+              if (block.name === "Write" && block.input?.file_path) {
+                writtenFiles.push(block.input.file_path);
+              }
+              // Track files created via Bash commands
+              if (block.name === "Bash" && block.input?.command) {
+                const bashPaths = extractFilePathsFromBash(block.input.command);
+                writtenFiles.push(...bashPaths);
+              }
               const status = toolNames.map((t) => `:wrench: ${t}`).join("\n");
               await safeEdit(`:hourglass: Working on it...\n${status}`);
             }
@@ -156,6 +182,16 @@ async function handleMessage(message, content, { cwd }) {
     for (let i = 1; i < chunks.length; i++) {
       await message.channel.send(chunks[i]);
     }
+
+    // Also scan response text for file paths as fallback
+    const textPaths = extractFilePathsFromText(finalText);
+    writtenFiles.push(...textPaths);
+
+    // Send written files as attachments
+    const attachments = collectAttachments(writtenFiles);
+    if (attachments.length) {
+      await message.channel.send({ files: attachments });
+    }
   } catch (err) {
     console.error("Discord handler error:", err);
     try {
@@ -164,6 +200,63 @@ async function handleMessage(message, content, { cwd }) {
       // Ignore edit failure
     }
   }
+}
+
+/**
+ * Extract file paths with eligible extensions from a bash command string.
+ * Looks for absolute paths (e.g., /tmp/output.pdf) or quoted paths.
+ */
+function extractFilePathsFromBash(command) {
+  const extPattern = ATTACHMENT_EXTENSIONS_LIST.map((e) => e.replace(".", "\\.")).join("|");
+  const regex = new RegExp(`(?:^|\\s|"|')(/[^\\s"']+(?:${extPattern}))`, "gi");
+  const paths = [];
+  let match;
+  while ((match = regex.exec(command)) !== null) {
+    paths.push(match[1]);
+  }
+  return paths;
+}
+
+/**
+ * Extract file paths from response text (e.g., "saved at /tmp/sample.pdf").
+ */
+function extractFilePathsFromText(text) {
+  const extPattern = ATTACHMENT_EXTENSIONS_LIST.map((e) => e.replace(".", "\\.")).join("|");
+  const regex = new RegExp(`(/[^\\s\`"'\\)\\]]+(?:${extPattern}))`, "gi");
+  const paths = [];
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    paths.push(match[1]);
+  }
+  return paths;
+}
+
+/**
+ * Collect attachments from written file paths.
+ * Only includes files that exist, have eligible extensions, and are under 25MB (Discord limit).
+ */
+function collectAttachments(filePaths) {
+  const seen = new Set();
+  const attachments = [];
+  const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB Discord limit
+
+  for (const filePath of filePaths) {
+    if (seen.has(filePath)) continue;
+    seen.add(filePath);
+
+    const ext = path.extname(filePath).toLowerCase();
+    if (!ATTACHMENT_EXTENSIONS.has(ext)) continue;
+
+    try {
+      const stat = fs.statSync(filePath);
+      if (!stat.isFile() || stat.size > MAX_FILE_SIZE || stat.size === 0) continue;
+      attachments.push(new AttachmentBuilder(filePath, { name: path.basename(filePath) }));
+    } catch {
+      // File doesn't exist or can't be read — skip
+    }
+  }
+
+  return attachments;
 }
 
 /**

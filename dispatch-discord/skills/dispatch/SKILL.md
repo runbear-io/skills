@@ -145,5 +145,6 @@ Request body: `prompt` (required), `cwd`, `sessionId`, `allowedTools`, `systemPr
 - **Local mode**: The Agent SDK inherits local Claude Code authentication. No API key needed.
 - **Docker mode**: Requires `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` in `.env`. Generate an OAuth token with `claude setup-token`. The `~/.claude` directory is also mounted (useful on Linux where credentials are file-based, but insufficient on macOS where auth is stored in Keychain).
 - Sessions are tracked per Discord thread. First message creates a new session; replies resume it.
-- Discord messages have a 2000 character limit. Long responses are split across multiple messages.
+- Discord messages have a 2000 character limit. Long responses are split across multiple messages by logical sections (headings, code blocks, paragraphs).
 - Responses stream progressively by editing the reply message (~1 edit per second to stay within Discord rate limits).
+- Files written by Claude via the `Write` tool are automatically sent as Discord attachments after the response. Eligible extensions: `.pdf`, `.md`, `.txt`, `.csv`, `.json`, `.xml`, `.html`, `.log`, `.yaml`, `.yml`, `.js`, `.ts`, `.py`, `.sh`, `.sql`, and more. Files must be under 25MB (Discord limit). Empty or missing files are skipped.
