@@ -57,9 +57,7 @@ Connect Claude Code to Slack via Socket Mode. Supports streaming responses.
 
 ```
 /dispatch-slack:setup-slack
-/dispatch-slack:dispatch-slack
-/dispatch-slack:dispatch-slack start /path/to/project
-/dispatch-slack:dispatch-slack stop
+/dispatch-slack:dispatch-slack [start|stop|status] [/path/to/project]
 ```
 
 ### Running modes
@@ -82,9 +80,7 @@ Connect Claude Code to Discord. Supports streaming responses via progressive mes
 
 ```
 /dispatch-discord:setup-discord
-/dispatch-discord:dispatch-discord
-/dispatch-discord:dispatch-discord start /path/to/project
-/dispatch-discord:dispatch-discord stop
+/dispatch-discord:dispatch-discord [start|stop|status] [/path/to/project]
 ```
 
 ### Running modes
