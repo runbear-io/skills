@@ -151,15 +151,10 @@ async function handleMessage(message, content, { cwd }) {
 
     // Final edit with complete response
     const finalText = latestText || "No response generated.";
-    if (finalText.length > MAX_MESSAGE_LENGTH) {
-      await safeEdit(finalText.slice(0, MAX_MESSAGE_LENGTH));
-      const remaining = finalText.slice(MAX_MESSAGE_LENGTH);
-      const chunks = splitMessage(remaining, MAX_MESSAGE_LENGTH);
-      for (const chunk of chunks) {
-        await message.channel.send(chunk);
-      }
-    } else {
-      await safeEdit(finalText);
+    const chunks = splitMessageBySections(finalText, MAX_MESSAGE_LENGTH);
+    await safeEdit(chunks[0]);
+    for (let i = 1; i < chunks.length; i++) {
+      await message.channel.send(chunks[i]);
     }
   } catch (err) {
     console.error("Discord handler error:", err);
@@ -171,23 +166,133 @@ async function handleMessage(message, content, { cwd }) {
   }
 }
 
-function splitMessage(text, maxLength) {
+/**
+ * Split text into chunks that fit within Discord's message limit,
+ * preserving logical sections (headings, code blocks, paragraphs)
+ * instead of cutting mid-content.
+ */
+function splitMessageBySections(text, maxLength) {
   if (text.length <= maxLength) return [text];
 
+  // Split into logical sections: headings, code blocks, and paragraph groups
+  const sections = parseIntoSections(text);
+
   const chunks = [];
-  let remaining = text;
-  while (remaining.length > 0) {
-    if (remaining.length <= maxLength) {
-      chunks.push(remaining);
-      break;
+  let current = "";
+
+  for (const section of sections) {
+    // If a single section exceeds the limit, split it further
+    if (section.length > maxLength) {
+      // Flush current buffer first
+      if (current) {
+        chunks.push(current.trimEnd());
+        current = "";
+      }
+      // Split oversized section by lines
+      const subChunks = splitLongSection(section, maxLength);
+      chunks.push(...subChunks);
+      continue;
     }
-    let splitIdx = remaining.lastIndexOf("\n", maxLength);
-    if (splitIdx === -1 || splitIdx < maxLength / 2) {
-      splitIdx = maxLength;
+
+    // Check if adding this section would exceed the limit
+    const combined = current ? current + "\n" + section : section;
+    if (combined.length > maxLength) {
+      // Flush current buffer, start new chunk with this section
+      if (current) chunks.push(current.trimEnd());
+      current = section;
+    } else {
+      current = combined;
     }
-    chunks.push(remaining.slice(0, splitIdx));
-    remaining = remaining.slice(splitIdx).replace(/^\n/, "");
   }
+
+  if (current) chunks.push(current.trimEnd());
+  return chunks.length ? chunks : [text.slice(0, maxLength)];
+}
+
+/**
+ * Parse markdown text into logical sections:
+ * - Code blocks (``` ... ```) are kept as single sections
+ * - Headings (# ...) start new sections
+ * - Consecutive non-empty lines are grouped as paragraph sections
+ * - Blank lines separate paragraph groups
+ */
+function parseIntoSections(text) {
+  const lines = text.split("\n");
+  const sections = [];
+  let current = [];
+  let inCodeBlock = false;
+
+  const flush = () => {
+    if (current.length) {
+      sections.push(current.join("\n"));
+      current = [];
+    }
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const isCodeFence = /^```/.test(line.trimStart());
+
+    if (isCodeFence && !inCodeBlock) {
+      // Start of code block — flush anything before it
+      flush();
+      inCodeBlock = true;
+      current.push(line);
+    } else if (isCodeFence && inCodeBlock) {
+      // End of code block — include closing fence and flush
+      current.push(line);
+      inCodeBlock = false;
+      flush();
+    } else if (inCodeBlock) {
+      current.push(line);
+    } else if (/^#{1,6}\s/.test(line)) {
+      // Heading starts a new section
+      flush();
+      current.push(line);
+    } else if (line.trim() === "") {
+      // Blank line separates paragraph groups
+      if (current.length) {
+        flush();
+      }
+    } else {
+      current.push(line);
+    }
+  }
+
+  // Handle unterminated code block
+  flush();
+  return sections;
+}
+
+/**
+ * Split an oversized section by lines, falling back to character split.
+ */
+function splitLongSection(text, maxLength) {
+  const lines = text.split("\n");
+  const chunks = [];
+  let current = "";
+
+  for (const line of lines) {
+    const combined = current ? current + "\n" + line : line;
+    if (combined.length > maxLength) {
+      if (current) chunks.push(current);
+      // Single line longer than maxLength — hard split
+      if (line.length > maxLength) {
+        let remaining = line;
+        while (remaining.length > maxLength) {
+          chunks.push(remaining.slice(0, maxLength));
+          remaining = remaining.slice(maxLength);
+        }
+        current = remaining;
+      } else {
+        current = line;
+      }
+    } else {
+      current = combined;
+    }
+  }
+
+  if (current) chunks.push(current);
   return chunks;
 }
 
