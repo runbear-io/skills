@@ -56,8 +56,26 @@ async function handleMessage(event, say, client, { tokenManager, teamId, botToke
 
     if (sessionId) options.resume = sessionId;
     if (cwd || process.env.CLAUDE_CWD) options.cwd = cwd || process.env.CLAUDE_CWD;
-    if (process.env.CLAUDE_SYSTEM_PROMPT)
-      options.systemPrompt = process.env.CLAUDE_SYSTEM_PROMPT;
+
+    const slackHints = [
+      "You are responding in Slack. Use Slack mrkdwn format, NOT standard Markdown.",
+      "Slack mrkdwn rules:",
+      "- Bold: *text* (not **text**)",
+      "- Italic: _text_ (not *text*)",
+      "- Strikethrough: ~text~",
+      "- Code: `code` and ```code blocks```",
+      "- Links: <https://example.com|link text>",
+      "- Lists: use plain bullet characters or numbers, no markdown list syntax",
+      "- Blockquote: > text",
+      "- Slack does NOT support headings (#), tables, or images in mrkdwn.",
+      "- For tabular data, use code blocks with aligned text.",
+      "Keep responses concise.",
+    ].join("\n");
+
+    const userPrompt = process.env.CLAUDE_SYSTEM_PROMPT || "";
+    options.systemPrompt = userPrompt
+      ? `${userPrompt}\n\n${slackHints}`
+      : slackHints;
 
     // Start a Slack stream
     const stream = await client.chat.startStream({
@@ -67,8 +85,24 @@ async function handleMessage(event, say, client, { tokenManager, teamId, botToke
     const streamTs = stream.ts;
 
     let fullText = "";
+    let flushedLength = 0;
     let lastAppendTime = 0;
     let pendingAppend = null;
+
+    const flushDelta = async () => {
+      const delta = fullText.slice(flushedLength);
+      if (!delta) return;
+      flushedLength = fullText.length;
+      try {
+        await client.chat.appendStream({
+          channel: event.channel,
+          ts: streamTs,
+          markdown_text: delta,
+        });
+      } catch (err) {
+        console.error("Stream append error:", err.message);
+      }
+    };
 
     const appendToStream = async (text) => {
       fullText = text;
@@ -82,30 +116,14 @@ async function handleMessage(event, say, client, { tokenManager, teamId, botToke
           pendingAppend = null;
         }
         lastAppendTime = now;
-        try {
-          await client.chat.appendStream({
-            channel: event.channel,
-            ts: streamTs,
-            markdown_text: fullText,
-          });
-        } catch (err) {
-          console.error("Stream append error:", err.message);
-        }
+        await flushDelta();
       } else if (!pendingAppend) {
         // Schedule a deferred append
         const delay = STREAM_APPEND_INTERVAL - timeSinceLastAppend;
         pendingAppend = setTimeout(async () => {
           pendingAppend = null;
           lastAppendTime = Date.now();
-          try {
-            await client.chat.appendStream({
-              channel: event.channel,
-              ts: streamTs,
-              markdown_text: fullText,
-            });
-          } catch (err) {
-            console.error("Stream append error:", err.message);
-          }
+          await flushDelta();
         }, delay);
       }
     };
@@ -119,7 +137,7 @@ async function handleMessage(event, say, client, { tokenManager, teamId, botToke
         if (message.type === "assistant" && message.message?.content) {
           for (const block of message.message.content) {
             if ("text" in block) {
-              await appendToStream(block.text);
+              await appendToStream(markdownToMrkdwn(block.text));
             }
           }
         }
@@ -135,6 +153,7 @@ async function handleMessage(event, say, client, { tokenManager, teamId, botToke
         threadSessions.delete(threadKey);
         delete options.resume;
         fullText = "";
+        flushedLength = 0;
         await processStream(options);
       } else {
         throw err;
@@ -151,11 +170,14 @@ async function handleMessage(event, say, client, { tokenManager, teamId, botToke
       threadSessions.set(threadKey, newSessionId);
     }
 
-    // Stop the stream with the final text
+    // Send any remaining unflushed text as the final delta, then stop the stream
+    const remainingDelta = fullText.slice(flushedLength);
     await client.chat.stopStream({
       channel: event.channel,
       ts: streamTs,
-      markdown_text: fullText || "No response generated.",
+      ...(remainingDelta || !flushedLength
+        ? { markdown_text: remainingDelta || "No response generated." }
+        : {}),
     });
   } catch (err) {
     console.error("Slack handler error:", err);
@@ -164,6 +186,46 @@ async function handleMessage(event, say, client, { tokenManager, teamId, botToke
       thread_ts: threadTs,
     });
   }
+}
+
+/**
+ * Convert standard Markdown to Slack mrkdwn format.
+ * Handles the most common patterns Claude might produce.
+ */
+function markdownToMrkdwn(text) {
+  let result = text;
+
+  // Convert markdown links [text](url) → <url|text>
+  result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "<$2|$1>");
+
+  // Convert bold **text** → *text* (but not inside code blocks)
+  // Process outside code blocks only
+  result = convertOutsideCode(result, (segment) => {
+    // Bold: **text** → *text*
+    segment = segment.replace(/\*\*(.+?)\*\*/g, "*$1*");
+    // Headings: # text → *text* (bold)
+    segment = segment.replace(/^#{1,6}\s+(.+)$/gm, "*$1*");
+    // Strikethrough: ~~text~~ → ~text~
+    segment = segment.replace(/~~(.+?)~~/g, "~$1~");
+    return segment;
+  });
+
+  return result;
+}
+
+/**
+ * Apply a transform function only to text outside of code blocks/inline code.
+ */
+function convertOutsideCode(text, transform) {
+  // Split by code blocks (``` ... ```) and inline code (` ... `)
+  const parts = text.split(/(```[\s\S]*?```|`[^`]+`)/g);
+  return parts
+    .map((part, i) => {
+      // Odd indices are code blocks/inline code — leave them alone
+      if (i % 2 === 1) return part;
+      return transform(part);
+    })
+    .join("");
 }
 
 module.exports = { createSlackBot };
