@@ -8,7 +8,7 @@ allowed-tools: Bash, Read, Grep, Glob
 
 Start, stop, restart, or check the status of the Slack bot server, which connects local Claude Code to Slack via the Agent SDK.
 
-The server entry point is `scripts/index.js`. The default port is `3000` (override with `--port <number>` or `PORT` env var).
+The server entry point is `scripts/index.js`. The default port is `3032` (override with `--port <number>` or `PORT` env var).
 
 ## Arguments
 
@@ -38,7 +38,7 @@ If the user does not specify, default to **local**.
 
 1. Check if the server is already running:
 ```bash
-lsof -ti:${PORT:-3000} 2>/dev/null
+lsof -ti:${PORT:-3032} 2>/dev/null
 ```
 If already running, inform the user and ask if they want to restart.
 
@@ -125,7 +125,7 @@ node "$SKILL_DIR/scripts/set-always-online.js" false
 
 2. Kill the server:
 ```bash
-kill $(lsof -ti:${PORT:-3000}) 2>/dev/null
+kill $(lsof -ti:${PORT:-3032}) 2>/dev/null
 ```
 
 #### Docker mode
@@ -147,7 +147,7 @@ Stop then start (preserves mode and any working directory argument).
 
 **Local:**
 ```bash
-lsof -ti:${PORT:-3000} 2>/dev/null
+lsof -ti:${PORT:-3032} 2>/dev/null
 ```
 If a PID is returned, the server is running. Otherwise it is stopped.
 

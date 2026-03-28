@@ -2,7 +2,7 @@ services:
   dispatch-slack:
     build: .
     ports:
-      - "3000:3000"
+      - "${PORT:-3032}:${PORT:-3032}"
     env_file: .env
     environment:
       - CLAUDE_CWD=${WORKSPACE_PATH}

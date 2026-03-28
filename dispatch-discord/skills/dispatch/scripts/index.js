@@ -21,7 +21,7 @@ function parseArgs(args) {
 }
 
 const args = parseArgs(process.argv.slice(2));
-const PORT = args.port || process.env.PORT || 3000;
+const PORT = args.port || process.env.PORT || 3031;
 const CWD = args.cwd || process.env.CLAUDE_CWD || null;
 const SESSION_ID = args.sessionId || process.env.CLAUDE_SESSION_ID || null;
 

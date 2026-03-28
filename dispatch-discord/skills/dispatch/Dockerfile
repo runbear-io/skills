@@ -19,6 +19,6 @@ COPY scripts/ scripts/
 # Switch to non-root user
 USER claude
 
-EXPOSE 3000
+EXPOSE ${PORT:-3031}
 
 ENTRYPOINT ["node", "scripts/index.js"]

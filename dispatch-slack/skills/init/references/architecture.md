@@ -45,4 +45,4 @@ Slack @mention or DM
 |---------|--------|
 | `CLAUDE_CWD` | Working directory for Claude Code |
 | `CLAUDE_SYSTEM_PROMPT` | Custom system prompt for Claude |
-| `PORT` | Server port (default: 3000) |
+| `PORT` | Server port (default: 3032) |
