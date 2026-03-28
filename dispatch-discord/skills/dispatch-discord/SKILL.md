@@ -55,7 +55,12 @@ If missing, tell the user to run `/dispatch-discord:setup-discord` first.
 cd "$SKILL_DIR" && npm install
 ```
 
-2. Start the server in the background:
+2. Copy `.env` from the project root to the skill directory so the server can load it:
+```bash
+cp "$PROJECT_ROOT/.env" "$SKILL_DIR/.env"
+```
+
+3. Start the server in the background:
 ```bash
 PROJECT_DIR="/private/tmp/claude-$(id -u)/$(echo "$PROJECT_ROOT" | tr '/' '-')" && SESSION_ID="$(find "$PROJECT_DIR"/*/tasks -name "*.output" -maxdepth 1 2>/dev/null | xargs ls -t 2>/dev/null | head -1 | sed "s|$PROJECT_DIR/||;s|/tasks/.*||")" && cd "$SKILL_DIR" && npm start -- --cwd "$PROJECT_ROOT" --session-id "$SESSION_ID" $ARGUMENTS
 ```
