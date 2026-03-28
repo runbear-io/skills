@@ -4,9 +4,6 @@ const { query } = require("@anthropic-ai/claude-agent-sdk");
 // Track sessions per Discord thread (channelId:threadId -> sessionId)
 const threadSessions = new Map();
 
-// Throttle interval for message edits (ms) — Discord allows ~5 edits per 5s
-const EDIT_INTERVAL = 1200;
-
 // Discord message length limit
 const MAX_MESSAGE_LENGTH = 2000;
 
@@ -46,12 +43,10 @@ function createDiscordBot({ cwd }) {
 }
 
 async function handleMessage(message, content, { cwd }) {
-  // Use thread ID if in a thread, otherwise use the message's channel + ts
   const threadKey = message.channel.isThread()
     ? message.channel.id
     : `${message.channelId}:${message.id}`;
 
-  // Send initial thinking message
   const reply = await message.reply(":hourglass: Working on it...");
 
   try {
@@ -70,42 +65,21 @@ async function handleMessage(message, content, { cwd }) {
     if (process.env.CLAUDE_SYSTEM_PROMPT)
       options.systemPrompt = process.env.CLAUDE_SYSTEM_PROMPT;
 
-    let fullText = "";
+    let latestText = "";
+    let toolNames = [];
     let lastEditTime = 0;
-    let pendingEdit = null;
+    const EDIT_INTERVAL = 1200;
 
-    const editReply = async (text) => {
-      // Truncate to Discord's limit
+    const safeEdit = async (text) => {
       const truncated =
         text.length > MAX_MESSAGE_LENGTH
           ? text.slice(0, MAX_MESSAGE_LENGTH - 3) + "..."
           : text;
       try {
         await reply.edit(truncated);
+        lastEditTime = Date.now();
       } catch (err) {
-        console.error("Message edit error:", err.message);
-      }
-    };
-
-    const appendText = async (text) => {
-      fullText = text;
-      const now = Date.now();
-      const timeSinceLastEdit = now - lastEditTime;
-
-      if (timeSinceLastEdit >= EDIT_INTERVAL) {
-        if (pendingEdit) {
-          clearTimeout(pendingEdit);
-          pendingEdit = null;
-        }
-        lastEditTime = now;
-        await editReply(fullText);
-      } else if (!pendingEdit) {
-        const delay = EDIT_INTERVAL - timeSinceLastEdit;
-        pendingEdit = setTimeout(async () => {
-          pendingEdit = null;
-          lastEditTime = Date.now();
-          await editReply(fullText);
-        }, delay);
+        console.error("Edit error:", err.message);
       }
     };
 
@@ -117,8 +91,20 @@ async function handleMessage(message, content, { cwd }) {
 
         if (msg.type === "assistant" && msg.message?.content) {
           for (const block of msg.message.content) {
+            // Tool use — update progress
+            if ("name" in block) {
+              toolNames.push(block.name);
+              const status = toolNames.map((t) => `:wrench: ${t}`).join("\n");
+              await safeEdit(`:hourglass: Working on it...\n${status}`);
+            }
+
+            // Text — stream it
             if ("text" in block) {
-              await appendText(block.text);
+              latestText = block.text;
+              const now = Date.now();
+              if (now - lastEditTime >= EDIT_INTERVAL) {
+                await safeEdit(latestText);
+              }
             }
           }
         }
@@ -128,22 +114,16 @@ async function handleMessage(message, content, { cwd }) {
     try {
       await processStream(options);
     } catch (err) {
-      // If session resume failed, retry without resuming
       if (sessionId && err.message && err.message.includes("session")) {
         console.log(`Session ${sessionId} not found, starting fresh`);
         threadSessions.delete(threadKey);
         delete options.resume;
-        fullText = "";
+        latestText = "";
+        toolNames = [];
         await processStream(options);
       } else {
         throw err;
       }
-    }
-
-    // Flush any pending edit
-    if (pendingEdit) {
-      clearTimeout(pendingEdit);
-      pendingEdit = null;
     }
 
     if (newSessionId) {
@@ -151,18 +131,16 @@ async function handleMessage(message, content, { cwd }) {
     }
 
     // Final edit with complete response
-    const finalText = fullText || "No response generated.";
-
-    // Split into multiple messages if response exceeds Discord's limit
+    const finalText = latestText || "No response generated.";
     if (finalText.length > MAX_MESSAGE_LENGTH) {
-      await editReply(finalText.slice(0, MAX_MESSAGE_LENGTH));
+      await safeEdit(finalText.slice(0, MAX_MESSAGE_LENGTH));
       const remaining = finalText.slice(MAX_MESSAGE_LENGTH);
       const chunks = splitMessage(remaining, MAX_MESSAGE_LENGTH);
       for (const chunk of chunks) {
         await message.channel.send(chunk);
       }
     } else {
-      await editReply(finalText);
+      await safeEdit(finalText);
     }
   } catch (err) {
     console.error("Discord handler error:", err);
