@@ -114,6 +114,9 @@ async function handleMessage(message, content, { cwd }) {
     let activityTimer = null;
     let activityTick = 0;
 
+    let editInFlight = false;
+    let pendingEditText = null;
+
     const safeEdit = async (text) => {
       const truncated =
         text.length > MAX_MESSAGE_LENGTH
@@ -127,24 +130,41 @@ async function handleMessage(message, content, { cwd }) {
       }
     };
 
+    // Non-blocking edit: fires the API call without awaiting in the stream loop.
+    // If an edit is already in flight, queues the latest text (coalescing).
+    const fireEdit = (text) => {
+      if (editInFlight) {
+        pendingEditText = text;
+        return;
+      }
+      editInFlight = true;
+      safeEdit(text).finally(() => {
+        editInFlight = false;
+        if (pendingEditText !== null) {
+          const next = pendingEditText;
+          pendingEditText = null;
+          fireEdit(next);
+        }
+      });
+    };
+
     const resetActivityTimer = () => {
       if (activityTimer) clearInterval(activityTimer);
       phaseStartTime = Date.now();
       activityTick = 0;
-      activityTimer = setInterval(async () => {
+      activityTimer = setInterval(() => {
         activityTick++;
         const elapsed = Math.round((Date.now() - phaseStartTime) / 1000);
         const prefix = getStillWorkingPrefix(activityTick, elapsed);
         if (displayPhase === "tool") {
-          await safeEdit(`${prefix}\n${lastToolStatus}`);
+          fireEdit(`${prefix}\n${lastToolStatus}`);
         } else if (displayPhase === "text") {
           const preview = latestText.length > MAX_MESSAGE_LENGTH - 100
             ? latestText.slice(0, MAX_MESSAGE_LENGTH - 100) + "..."
             : latestText;
-          await safeEdit(`${preview}\n\n${prefix}`);
+          fireEdit(`${preview}\n\n${prefix}`);
         } else {
-          // init phase — no tool or text yet
-          await safeEdit(prefix);
+          fireEdit(prefix);
         }
       }, REPHRASE_INTERVAL);
     };
@@ -178,7 +198,7 @@ async function handleMessage(message, content, { cwd }) {
                 const bashPaths = extractFilePathsFromBash(block.input.command);
                 writtenFiles.push(...bashPaths);
               }
-              await safeEdit(`:hourglass: Working on it...\n${lastToolStatus}`);
+              fireEdit(`:hourglass: Working on it...\n${lastToolStatus}`);
               resetActivityTimer();
             }
 
@@ -188,7 +208,7 @@ async function handleMessage(message, content, { cwd }) {
               latestText = block.text;
               const now = Date.now();
               if (now - lastEditTime >= EDIT_INTERVAL) {
-                await safeEdit(latestText + "\n\n...⏳");
+                fireEdit(latestText + "\n\n...⏳");
                 resetActivityTimer();
               }
             }
