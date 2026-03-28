@@ -284,8 +284,20 @@ function describeToolUse(block) {
       const cmd = truncate((input.command || "").split("\n")[0], 60);
       return `:gear: Running \`${cmd}\``;
     }
-    default:
+    case "WebSearch":
+      return `:globe_with_meridians: Searching the web for \`${truncate(input.query, 50)}\``;
+    case "WebFetch":
+      return `:globe_with_meridians: Fetching \`${truncate(input.url, 60)}\``;
+    case "Agent":
+      return `:robot: Spawning agent: ${truncate(input.description || input.prompt, 50)}`;
+    case "NotebookEdit":
+      return `:notebook: Editing notebook \`${shortenPath(input.notebook_path)}\``;
+    default: {
+      // Try to show something useful from the input
+      const detail = input.query || input.prompt || input.pattern || input.url || input.file_path;
+      if (detail) return `:wrench: ${block.name}: \`${truncate(String(detail), 50)}\``;
       return `:wrench: ${block.name}`;
+    }
   }
 }
 
