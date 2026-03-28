@@ -43,9 +43,10 @@ function createDiscordBot({ cwd }) {
 }
 
 async function handleMessage(message, content, { cwd }) {
+  // Session per thread, per DM, or per channel
   const threadKey = message.channel.isThread()
     ? message.channel.id
-    : `${message.channelId}:${message.id}`;
+    : message.channelId;
 
   const reply = await message.reply(":hourglass: Working on it...");
 
@@ -116,12 +117,12 @@ async function handleMessage(message, content, { cwd }) {
               await safeEdit(`:hourglass: Working on it...\n${status}`);
             }
 
-            // Text — stream it
+            // Text — stream it with progress indicator
             if ("text" in block) {
               latestText = block.text;
               const now = Date.now();
               if (now - lastEditTime >= EDIT_INTERVAL) {
-                await safeEdit(latestText);
+                await safeEdit(latestText + "\n\n...⏳");
               }
             }
           }
