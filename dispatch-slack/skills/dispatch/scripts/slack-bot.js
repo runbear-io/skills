@@ -39,7 +39,7 @@ function createSlackBot({ tokenManager, teamId, botToken, cwd }) {
 async function handleMessage(event, say, client, { tokenManager, teamId, botToken, cwd }) {
   const threadTs = event.thread_ts || event.ts;
   const threadKey = `${event.channel}:${threadTs}`;
-  const prompt = event.text.replace(/<@[A-Z0-9]+>/g, "").trim();
+  const prompt = (event.text || "").replace(/<@[A-Z0-9]+>/g, "").trim();
 
   if (!prompt) return;
 
@@ -84,12 +84,19 @@ async function handleMessage(event, say, client, { tokenManager, teamId, botToke
     });
     const statusTs = statusMsg.ts;
 
-    // Start a Slack stream for the actual response
-    const stream = await client.chat.startStream({
-      channel: event.channel,
-      thread_ts: threadTs,
-    });
-    const streamTs = stream.ts;
+    // Try to start a Slack stream; fall back to regular message if unavailable
+    let streamTs = null;
+    let useStreaming = false;
+    try {
+      const stream = await client.chat.startStream({
+        channel: event.channel,
+        thread_ts: threadTs,
+      });
+      streamTs = stream.ts;
+      useStreaming = true;
+    } catch (streamErr) {
+      console.log("Streaming not available, falling back to regular messages:", streamErr.message);
+    }
 
     let fullText = "";
     let flushedLength = 0;
@@ -157,6 +164,7 @@ async function handleMessage(event, say, client, { tokenManager, teamId, botToke
     resetActivityTimer();
 
     const flushDelta = async () => {
+      if (!useStreaming) return;
       const delta = fullText.slice(flushedLength);
       if (!delta) return;
       flushedLength = fullText.length;
@@ -173,6 +181,7 @@ async function handleMessage(event, say, client, { tokenManager, teamId, botToke
 
     const appendToStream = async (text) => {
       fullText = text;
+      if (!useStreaming) return;
       const now = Date.now();
       const timeSinceLastAppend = now - lastAppendTime;
 
@@ -254,18 +263,27 @@ async function handleMessage(event, say, client, { tokenManager, teamId, botToke
       threadSessions.set(threadKey, newSessionId);
     }
 
-    // Send any remaining unflushed text as the final delta, then stop the stream
-    const remainingDelta = fullText.slice(flushedLength);
-    await client.chat.stopStream({
-      channel: event.channel,
-      ts: streamTs,
-      ...(remainingDelta || !flushedLength
-        ? { markdown_text: remainingDelta || "No response generated." }
-        : {}),
-    });
+    if (useStreaming) {
+      // Send any remaining unflushed text as the final delta, then stop the stream
+      const remainingDelta = fullText.slice(flushedLength);
+      await client.chat.stopStream({
+        channel: event.channel,
+        ts: streamTs,
+        ...(remainingDelta || !flushedLength
+          ? { markdown_text: remainingDelta || "No response generated." }
+          : {}),
+      });
+    } else {
+      // Fallback: post final text as a regular message
+      const finalText = markdownToMrkdwn(fullText) || "No response generated.";
+      await say({
+        text: finalText,
+        thread_ts: threadTs,
+      });
+    }
   } catch (err) {
-    clearActivityTimer();
-    await deleteStatus();
+    if (typeof clearActivityTimer === "function") clearActivityTimer();
+    if (typeof deleteStatus === "function") await deleteStatus();
     console.error("Slack handler error:", err);
     await say({
       text: `:x: Error: ${err.message}`,
