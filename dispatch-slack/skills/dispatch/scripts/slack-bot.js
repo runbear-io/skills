@@ -21,27 +21,102 @@ function createSlackBot({ tokenManager, teamId, botToken, cwd }) {
     socketMode: !!process.env.SLACK_APP_TOKEN,
   });
 
+  // Resolve teamId from auth.test if not provided (direct bot token mode)
+  let resolvedTeamId = teamId || null;
+  app.use(async ({ client, next }) => {
+    if (!resolvedTeamId) {
+      try {
+        const auth = await client.auth.test();
+        resolvedTeamId = auth.team_id;
+        console.log(`Resolved team ID: ${resolvedTeamId}`);
+      } catch (err) {
+        console.error("Failed to resolve team ID:", err.message);
+      }
+    }
+    await next();
+  });
+
   // Respond to messages that mention the bot or are in DMs
   app.event("app_mention", async ({ event, say, client }) => {
-    await handleMessage(event, say, client, { tokenManager, teamId, botToken, cwd });
+    await handleMessage(event, say, client, { teamId: resolvedTeamId, cwd });
   });
 
   app.event("message", async ({ event, say, client }) => {
     // Only respond to DMs (not channels — use app_mention for that)
     if (event.channel_type === "im" && !event.bot_id) {
-      await handleMessage(event, say, client, { tokenManager, teamId, botToken, cwd });
+      await handleMessage(event, say, client, { teamId: resolvedTeamId, cwd });
     }
   });
 
   return app;
 }
 
-async function handleMessage(event, say, client, { tokenManager, teamId, botToken, cwd }) {
+async function handleMessage(event, say, client, { teamId, cwd }) {
   const threadTs = event.thread_ts || event.ts;
   const threadKey = `${event.channel}:${threadTs}`;
   const prompt = (event.text || "").replace(/<@[A-Z0-9]+>/g, "").trim();
 
   if (!prompt) return;
+
+  // Start a Slack stream for the response
+  let streamTs = null;
+  let useStreaming = false;
+  try {
+    const stream = await client.chat.startStream({
+      channel: event.channel,
+      thread_ts: threadTs,
+      ...(teamId ? { recipient_team_id: teamId } : {}),
+      ...(event.channel_type !== "im" && event.user ? { recipient_user_id: event.user } : {}),
+    });
+    streamTs = stream.ts;
+    useStreaming = true;
+  } catch (streamErr) {
+    console.log("Streaming not available, falling back to regular messages:", streamErr.message);
+  }
+
+  let fullText = "";
+  let flushedLength = 0;
+  let lastAppendTime = 0;
+  let pendingAppend = null;
+
+  const flushDelta = async () => {
+    if (!useStreaming) return;
+    const delta = fullText.slice(flushedLength);
+    if (!delta) return;
+    flushedLength = fullText.length;
+    try {
+      await client.chat.appendStream({
+        channel: event.channel,
+        ts: streamTs,
+        markdown_text: delta,
+      });
+    } catch (err) {
+      console.error("Stream append error:", err.message);
+    }
+  };
+
+  const appendToStream = async (newFullText) => {
+    fullText = newFullText;
+    if (!useStreaming) return;
+    const now = Date.now();
+    const timeSinceLastAppend = now - lastAppendTime;
+
+    if (timeSinceLastAppend >= STREAM_APPEND_INTERVAL) {
+      if (pendingAppend) {
+        clearTimeout(pendingAppend);
+        pendingAppend = null;
+      }
+      lastAppendTime = now;
+      await flushDelta();
+    } else if (!pendingAppend) {
+      const delay = STREAM_APPEND_INTERVAL - timeSinceLastAppend;
+      pendingAppend = setTimeout(async () => {
+        pendingAppend = null;
+        lastAppendTime = Date.now();
+        await flushDelta();
+      }, delay);
+    }
+  };
 
   try {
     let sessionId = threadSessions.get(threadKey);
@@ -77,130 +152,8 @@ async function handleMessage(event, say, client, { tokenManager, teamId, botToke
       ? `${userPrompt}\n\n${slackHints}`
       : slackHints;
 
-    // Post a status message that will be updated during tool use
-    const statusMsg = await say({
-      text: ":hourglass_flowing_sand: Working on it...",
-      thread_ts: threadTs,
-    });
-    const statusTs = statusMsg.ts;
-
-    // Try to start a Slack stream; fall back to regular message if unavailable
-    let streamTs = null;
-    let useStreaming = false;
-    try {
-      const stream = await client.chat.startStream({
-        channel: event.channel,
-        thread_ts: threadTs,
-      });
-      streamTs = stream.ts;
-      useStreaming = true;
-    } catch (streamErr) {
-      console.log("Streaming not available, falling back to regular messages:", streamErr.message);
-    }
-
-    let fullText = "";
-    let flushedLength = 0;
-    let lastAppendTime = 0;
-    let pendingAppend = null;
-    let lastToolStatus = "";
-    let displayPhase = "init";
-    let activityTimer = null;
-    let phaseStartTime = Date.now();
-    let activityTick = 0;
-    let statusDeleted = false;
-    const REPHRASE_INTERVAL = 5000;
-
-    const updateStatus = async (text) => {
-      if (statusDeleted) return;
-      try {
-        await client.chat.update({
-          channel: event.channel,
-          ts: statusTs,
-          text,
-        });
-      } catch (err) {
-        console.error("Status update error:", err.message);
-      }
-    };
-
-    const deleteStatus = async () => {
-      if (statusDeleted) return;
-      statusDeleted = true;
-      clearActivityTimer();
-      try {
-        await client.chat.delete({
-          channel: event.channel,
-          ts: statusTs,
-        });
-      } catch (err) {
-        console.error("Status delete error:", err.message);
-      }
-    };
-
-    const resetActivityTimer = () => {
-      clearActivityTimer();
-      phaseStartTime = Date.now();
-      activityTick = 0;
-      activityTimer = setInterval(async () => {
-        activityTick++;
-        const elapsed = Math.round((Date.now() - phaseStartTime) / 1000);
-        const prefix = getStillWorkingPrefix(activityTick, elapsed);
-        if (displayPhase === "tool") {
-          await updateStatus(`${prefix}\n${lastToolStatus}`);
-        } else {
-          await updateStatus(prefix);
-        }
-      }, REPHRASE_INTERVAL);
-    };
-
-    const clearActivityTimer = () => {
-      if (activityTimer) {
-        clearInterval(activityTimer);
-        activityTimer = null;
-      }
-    };
-
-    // Start the timer so the initial status doesn't go stale
-    resetActivityTimer();
-
-    const flushDelta = async () => {
-      if (!useStreaming) return;
-      const delta = fullText.slice(flushedLength);
-      if (!delta) return;
-      flushedLength = fullText.length;
-      try {
-        await client.chat.appendStream({
-          channel: event.channel,
-          ts: streamTs,
-          markdown_text: delta,
-        });
-      } catch (err) {
-        console.error("Stream append error:", err.message);
-      }
-    };
-
-    const appendToStream = async (text) => {
-      fullText = text;
-      if (!useStreaming) return;
-      const now = Date.now();
-      const timeSinceLastAppend = now - lastAppendTime;
-
-      if (timeSinceLastAppend >= STREAM_APPEND_INTERVAL) {
-        if (pendingAppend) {
-          clearTimeout(pendingAppend);
-          pendingAppend = null;
-        }
-        lastAppendTime = now;
-        await flushDelta();
-      } else if (!pendingAppend) {
-        const delay = STREAM_APPEND_INTERVAL - timeSinceLastAppend;
-        pendingAppend = setTimeout(async () => {
-          pendingAppend = null;
-          lastAppendTime = Date.now();
-          await flushDelta();
-        }, delay);
-      }
-    };
+    // Track whether we're inside a thinking section
+    let inThinking = false;
 
     const processStream = async (queryOptions) => {
       for await (const message of query({ prompt, options: queryOptions })) {
@@ -210,26 +163,44 @@ async function handleMessage(event, say, client, { tokenManager, teamId, botToke
 
         if (message.type === "assistant" && message.message?.content) {
           for (const block of message.message.content) {
-            // Tool use — update status message
-            if ("name" in block) {
-              displayPhase = "tool";
-              lastToolStatus = describeToolUse(block);
-              await updateStatus(`:hourglass_flowing_sand: Working on it...\n${lastToolStatus}`);
-              resetActivityTimer();
+            // Thinking block — show as collapsed thought process
+            if (block.type === "thinking" && block.thinking) {
+              const thinkingText = block.thinking.trim();
+              if (thinkingText) {
+                // Show thinking as a dimmed blockquote
+                const lines = thinkingText.split("\n").map(l => `> _${l}_`).join("\n");
+                if (!inThinking) {
+                  fullText += (fullText ? "\n" : "") + "> :thought_balloon: *Thinking...*\n";
+                  inThinking = true;
+                }
+                fullText += lines + "\n";
+                await appendToStream(fullText);
+              }
             }
 
-            // Text — stream to the response, delete status when first text arrives
-            if ("text" in block) {
-              if (!statusDeleted) {
-                await deleteStatus();
+            // Tool use — show inline
+            if ("name" in block && block.type === "tool_use") {
+              if (inThinking) {
+                fullText += "\n";
+                inThinking = false;
               }
-              displayPhase = "text";
-              await appendToStream(markdownToMrkdwn(block.text));
+              const toolDesc = describeToolUse(block);
+              fullText += (fullText ? "\n" : "") + toolDesc + "\n";
+              await appendToStream(fullText);
+            }
+
+            // Text — main response
+            if ("text" in block && block.type === "text") {
+              if (inThinking) {
+                fullText += "\n";
+                inThinking = false;
+              }
+              fullText += (fullText ? "\n" : "") + markdownToMrkdwn(block.text);
+              await appendToStream(fullText);
             }
           }
         }
       }
-      clearActivityTimer();
     };
 
     try {
@@ -242,16 +213,12 @@ async function handleMessage(event, say, client, { tokenManager, teamId, botToke
         delete options.resume;
         fullText = "";
         flushedLength = 0;
-        displayPhase = "init";
-        resetActivityTimer();
+        inThinking = false;
         await processStream(options);
       } else {
         throw err;
       }
     }
-
-    // Clean up status message if still visible
-    await deleteStatus();
 
     // Flush any pending append
     if (pendingAppend) {
@@ -264,7 +231,6 @@ async function handleMessage(event, say, client, { tokenManager, teamId, botToke
     }
 
     if (useStreaming) {
-      // Send any remaining unflushed text as the final delta, then stop the stream
       const remainingDelta = fullText.slice(flushedLength);
       await client.chat.stopStream({
         channel: event.channel,
@@ -275,37 +241,30 @@ async function handleMessage(event, say, client, { tokenManager, teamId, botToke
       });
     } else {
       // Fallback: post final text as a regular message
-      const finalText = markdownToMrkdwn(fullText) || "No response generated.";
       await say({
-        text: finalText,
+        text: fullText || "No response generated.",
         thread_ts: threadTs,
       });
     }
   } catch (err) {
-    if (typeof clearActivityTimer === "function") clearActivityTimer();
-    if (typeof deleteStatus === "function") await deleteStatus();
     console.error("Slack handler error:", err);
-    await say({
-      text: `:x: Error: ${err.message}`,
-      thread_ts: threadTs,
-    });
+    if (useStreaming && streamTs) {
+      try {
+        await client.chat.stopStream({
+          channel: event.channel,
+          ts: streamTs,
+          markdown_text: `:x: Error: ${err.message}`,
+        });
+      } catch (stopErr) {
+        console.error("Stream stop error:", stopErr.message);
+      }
+    } else {
+      await say({
+        text: `:x: Error: ${err.message}`,
+        thread_ts: threadTs,
+      });
+    }
   }
-}
-
-const STILL_WORKING_PREFIXES = [
-  ":hourglass_flowing_sand: Still working on it…",
-  ":hourglass: Hang tight, still going…",
-  ":hourglass_flowing_sand: Taking a moment…",
-  ":hourglass: Still at it…",
-  ":hourglass_flowing_sand: Almost there, still processing…",
-  ":hourglass: Working through this…",
-  ":hourglass_flowing_sand: Bear with me…",
-  ":hourglass: Still crunching…",
-];
-
-function getStillWorkingPrefix(tick, elapsedSec) {
-  const idx = (tick - 1) % STILL_WORKING_PREFIXES.length;
-  return `${STILL_WORKING_PREFIXES[idx]} (${elapsedSec}s)`;
 }
 
 function describeToolUse(block) {
@@ -355,7 +314,6 @@ function truncate(str, max) {
 
 /**
  * Convert standard Markdown to Slack mrkdwn format.
- * Handles the most common patterns Claude might produce.
  */
 function markdownToMrkdwn(text) {
   let result = text;
@@ -363,14 +321,10 @@ function markdownToMrkdwn(text) {
   // Convert markdown links [text](url) → <url|text>
   result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "<$2|$1>");
 
-  // Convert bold **text** → *text* (but not inside code blocks)
-  // Process outside code blocks only
+  // Convert bold/headings/strikethrough outside code blocks
   result = convertOutsideCode(result, (segment) => {
-    // Bold: **text** → *text*
     segment = segment.replace(/\*\*(.+?)\*\*/g, "*$1*");
-    // Headings: # text → *text* (bold)
     segment = segment.replace(/^#{1,6}\s+(.+)$/gm, "*$1*");
-    // Strikethrough: ~~text~~ → ~text~
     segment = segment.replace(/~~(.+?)~~/g, "~$1~");
     return segment;
   });
@@ -382,11 +336,9 @@ function markdownToMrkdwn(text) {
  * Apply a transform function only to text outside of code blocks/inline code.
  */
 function convertOutsideCode(text, transform) {
-  // Split by code blocks (``` ... ```) and inline code (` ... `)
   const parts = text.split(/(```[\s\S]*?```|`[^`]+`)/g);
   return parts
     .map((part, i) => {
-      // Odd indices are code blocks/inline code — leave them alone
       if (i % 2 === 1) return part;
       return transform(part);
     })
