@@ -152,8 +152,9 @@ async function handleMessage(event, say, client, { teamId, cwd }) {
       ? `${userPrompt}\n\n${slackHints}`
       : slackHints;
 
-    // Track whether we're inside a thinking section
+    // Track thinking state and final (non-thinking) text separately
     let inThinking = false;
+    let finalText = ""; // Text without thinking — used for the final message
 
     const processStream = async (queryOptions) => {
       for await (const message of query({ prompt, options: queryOptions })) {
@@ -163,11 +164,10 @@ async function handleMessage(event, say, client, { teamId, cwd }) {
 
         if (message.type === "assistant" && message.message?.content) {
           for (const block of message.message.content) {
-            // Thinking block — show as collapsed thought process
+            // Thinking block — stream live but don't include in finalText
             if (block.type === "thinking" && block.thinking) {
               const thinkingText = block.thinking.trim();
               if (thinkingText) {
-                // Show thinking as a dimmed blockquote
                 const lines = thinkingText.split("\n").map(l => `> _${l}_`).join("\n");
                 if (!inThinking) {
                   fullText += (fullText ? "\n" : "") + "> :thought_balloon: *Thinking...*\n";
@@ -178,7 +178,7 @@ async function handleMessage(event, say, client, { teamId, cwd }) {
               }
             }
 
-            // Tool use — show inline
+            // Tool use — show inline (include in both)
             if ("name" in block && block.type === "tool_use") {
               if (inThinking) {
                 fullText += "\n";
@@ -186,6 +186,7 @@ async function handleMessage(event, say, client, { teamId, cwd }) {
               }
               const toolDesc = describeToolUse(block);
               fullText += (fullText ? "\n" : "") + toolDesc + "\n";
+              finalText += (finalText ? "\n" : "") + toolDesc + "\n";
               await appendToStream(fullText);
             }
 
@@ -195,7 +196,9 @@ async function handleMessage(event, say, client, { teamId, cwd }) {
                 fullText += "\n";
                 inThinking = false;
               }
-              fullText += (fullText ? "\n" : "") + markdownToMrkdwn(block.text);
+              const converted = markdownToMrkdwn(block.text);
+              fullText += (fullText ? "\n" : "") + converted;
+              finalText += (finalText ? "\n" : "") + converted;
               await appendToStream(fullText);
             }
           }
@@ -212,6 +215,7 @@ async function handleMessage(event, say, client, { teamId, cwd }) {
         threadSessions.delete(threadKey);
         delete options.resume;
         fullText = "";
+        finalText = "";
         flushedLength = 0;
         inThinking = false;
         await processStream(options);
@@ -231,6 +235,7 @@ async function handleMessage(event, say, client, { teamId, cwd }) {
     }
 
     if (useStreaming) {
+      // Stop the stream first
       const remainingDelta = fullText.slice(flushedLength);
       await client.chat.stopStream({
         channel: event.channel,
@@ -239,10 +244,22 @@ async function handleMessage(event, say, client, { teamId, cwd }) {
           ? { markdown_text: remainingDelta || "No response generated." }
           : {}),
       });
+      // Replace the streamed message with finalText (thinking removed)
+      if (finalText && finalText !== fullText) {
+        try {
+          await client.chat.update({
+            channel: event.channel,
+            ts: streamTs,
+            text: finalText,
+          });
+        } catch (err) {
+          console.error("Failed to update message to remove thinking:", err.message);
+        }
+      }
     } else {
-      // Fallback: post final text as a regular message
+      // Fallback: post finalText as a regular message (no thinking)
       await say({
-        text: fullText || "No response generated.",
+        text: finalText || "No response generated.",
         thread_ts: threadTs,
       });
     }
