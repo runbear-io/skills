@@ -49,11 +49,6 @@ grep -c "^SLACK_APP_TOKEN" "$PROJECT_ROOT/.env"
 ```
 If missing, tell the user to run `/dispatch-slack:init` first.
 
-3. Set the bot's presence to online:
-```bash
-node "$SKILL_DIR/scripts/set-always-online.js" true
-```
-
 #### Local mode
 
 1. Install dependencies (if `node_modules/` is missing):
@@ -118,23 +113,13 @@ Confirm "Slack bot started" appears in the logs.
 ### stop
 
 #### Local mode
-1. Set the bot's presence to offline:
-```bash
-node "$SKILL_DIR/scripts/set-always-online.js" false
-```
-
-2. Kill the server:
+1. Kill the server:
 ```bash
 kill $(lsof -ti:${PORT:-3032}) 2>/dev/null
 ```
 
 #### Docker mode
-1. Set the bot's presence to offline:
-```bash
-node "$SKILL_DIR/scripts/set-always-online.js" false
-```
-
-2. Stop the container:
+1. Stop the container:
 ```bash
 cd "$SKILL_DIR" && docker compose down
 ```

@@ -9,7 +9,6 @@ scripts/
 ├── index.js             Express server + auto-start Slack bot
 ├── token-manager.js     OAuth token rotation (refresh/store/retrieve)
 ├── slack-bot.js         Slack Bolt app (events → Claude Code → reply)
-├── set-always-online.js Toggle bot online/offline via manifest API
 └── .slack-tokens.json   Persisted token storage (gitignored)
 ```
 
