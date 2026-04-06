@@ -79,7 +79,7 @@ async function createApp(accessToken, botName) {
       },
       bot_user: {
         display_name: botName,
-        always_online: false,
+        always_online: true,
       },
     },
     oauth_config: {
