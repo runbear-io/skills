@@ -39,6 +39,11 @@
       "skills": [
         "./skills/bundle"
       ]
+    },
+    {
+      "name": "skill-uploader",
+      "description": "Upload local Claude skills to a Runbear Agent SDK agent",
+      "source": "./skill-uploader"
     }
   ]
 }

@@ -1,0 +1,17 @@
+{
+  "name": "skill-uploader",
+  "description": "Upload local Claude skills to a Runbear Claude Agent SDK agent. Bundles the /upload-local-skill-to-runbear command and the hosted Runbear MCP server (OAuth).",
+  "version": "0.1.0",
+  "author": {
+    "name": "Runbear",
+    "url": "https://runbear.io"
+  },
+  "homepage": "https://docs.runbear.io/api-reference/mcp-server",
+  "keywords": ["runbear", "agent-sdk", "skills", "mcp"],
+  "mcpServers": {
+    "runbear": {
+      "type": "http",
+      "url": "https://api.runbear.io/mcp"
+    }
+  }
+}
