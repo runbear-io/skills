@@ -9,6 +9,7 @@ Skills for exposing Claude Agent via HTTP, Slack, and Discord.
 - [dispatch-http](#dispatch-http)
 - [dispatch-slack](#dispatch-slack)
 - [dispatch-discord](#dispatch-discord)
+- [skill-uploader](#skill-uploader)
 - [License](#license)
 
 ## Use Cases
@@ -25,6 +26,7 @@ Skills for exposing Claude Agent via HTTP, Slack, and Discord.
 /plugin install dispatch-http@runbear-skills
 /plugin install dispatch-slack@runbear-skills
 /plugin install dispatch-discord@runbear-skills
+/plugin install skill-uploader@runbear-skills
 ```
 
 ## dispatch-http
@@ -89,6 +91,34 @@ The `dispatch` skill supports two modes:
 
 - **Local** — Run directly on the host machine. Uses local Claude Code authentication.
 - **Docker** — Run in a container for sandboxed filesystem access. Requires `CLAUDE_CODE_OAUTH_TOKEN` (generate with `claude setup-token`) or `ANTHROPIC_API_KEY` in `.env`.
+
+## skill-uploader
+
+Deploy local Claude skill folder(s) to a hosted Runbear Agent SDK agent. Reads a local
+skill folder, runs a safety preflight, and deploys each `SKILL.md` through the Runbear
+`upload_local_skill_to_agent` MCP tool.
+
+| Skill | Description |
+|-------|-------------|
+| `upload` | Upload local skill folder(s) to a Runbear agent identified by an app URL or app UUID |
+
+### Prerequisites
+
+- The **Runbear management MCP server** must be connected in your Claude Code session —
+  it provides the `upload_local_skill_to_agent` tool.
+- The target **Runbear Agent SDK app URL or app UUID** (`--agent`).
+
+### Usage
+
+```
+/skill-uploader:upload ./my-skill --agent https://app.runbear.io/agents/<appId>
+/skill-uploader:upload ./my-skill --agent <appId>
+/skill-uploader:upload ./my-skill --agent <appId> --overwrite
+/skill-uploader:upload ./internal-skills --agent <appId>
+```
+
+The backend deploys **one skill per call**. If the folder contains multiple `SKILL.md`
+files, each is uploaded independently and reported per skill.
 
 ## License
 
