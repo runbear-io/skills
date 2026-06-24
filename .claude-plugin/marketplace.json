@@ -9,36 +9,31 @@
       "name": "dispatch-http",
       "description": "Skills for exposing Claude Agent as HTTP APIs",
       "source": "./dispatch-http",
-      "skills": [
-        "./skills/dispatch",
-        "./skills/expose"
-      ]
+      "skills": ["./skills/dispatch", "./skills/expose"]
     },
     {
       "name": "dispatch-slack",
       "description": "Skills for connecting Claude Agent to Slack",
       "source": "./dispatch-slack",
-      "skills": [
-        "./skills/dispatch",
-        "./skills/init"
-      ]
+      "skills": ["./skills/dispatch", "./skills/init"]
     },
     {
       "name": "dispatch-discord",
       "description": "Skills for connecting Claude Agent to Discord",
       "source": "./dispatch-discord",
-      "skills": [
-        "./skills/dispatch",
-        "./skills/init"
-      ]
+      "skills": ["./skills/dispatch", "./skills/init"]
     },
     {
       "name": "shipyard",
       "description": "Build and distribution tools",
       "source": "./shipyard",
-      "skills": [
-        "./skills/bundle"
-      ]
+      "skills": ["./skills/bundle"]
+    },
+    {
+      "name": "skill-uploader",
+      "description": "Deploy local Claude skills to a hosted Runbear Agent SDK agent",
+      "source": "./skill-uploader",
+      "skills": ["./skills/upload"]
     }
   ]
 }
