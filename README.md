@@ -10,6 +10,7 @@ Skills for exposing Claude Agent via HTTP, Slack, and Discord.
 - [dispatch-slack](#dispatch-slack)
 - [dispatch-discord](#dispatch-discord)
 - [skill-uploader](#skill-uploader)
+- [runbear](#runbear)
 - [License](#license)
 
 ## Use Cases
@@ -27,6 +28,7 @@ Skills for exposing Claude Agent via HTTP, Slack, and Discord.
 /plugin install dispatch-slack@runbear-skills
 /plugin install dispatch-discord@runbear-skills
 /plugin install skill-uploader@runbear-skills
+/plugin install runbear@runbear-skills
 ```
 
 ## dispatch-http
@@ -119,6 +121,41 @@ skill folder, runs a safety preflight, and deploys each `SKILL.md` through the R
 
 The backend deploys **one skill per call**. If the folder contains multiple `SKILL.md`
 files, each is uploaded independently and reported per skill.
+
+## runbear
+
+Deploy a whole local Claude Code **project** to a hosted Runbear Agent SDK agent. Reads
+every eligible file under the project, filters out secrets, env, config, and build
+output, and writes them to the agent's workspace file system at their relative paths
+through the Runbear `deploy_project_to_agent` MCP tool. The hosted agent then runs
+against the same `CLAUDE.md`, skills, subagents, docs, and code you have locally.
+
+Where `skill-uploader` deploys a single `SKILL.md`, `runbear:deploy` deploys the entire
+project and preserves its directory layout, including code and config files.
+
+| Skill | Description |
+|-------|-------------|
+| `deploy` | Deploy a local project's files to a Runbear Agent SDK agent identified by an app URL or app UUID |
+
+### Prerequisites
+
+- The **Runbear management MCP server** must be connected in your Claude Code session —
+  it provides the `deploy_project_to_agent` tool.
+- The target **Runbear Agent SDK app URL or app UUID** (`--agent`). The agent must be of
+  type Claude Agent SDK.
+
+### Usage
+
+```
+/runbear:deploy .
+/runbear:deploy . --agent https://app.runbear.io/agents/<appId>
+/runbear:deploy ./my-project --agent <appId>
+/runbear:deploy ./my-project --agent <appId> --overwrite
+```
+
+The backend caps a deploy at **300 files** and **5 MiB** total, and blocks secrets,
+`.env`, `.git/`, `node_modules/`, `.mcp.json`, and Claude settings files. Use
+`--overwrite` to replace files that already exist in the agent workspace.
 
 ## License
 
