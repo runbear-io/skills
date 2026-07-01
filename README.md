@@ -124,14 +124,18 @@ files, each is uploaded independently and reported per skill.
 
 ## runbear
 
-Deploy a whole local Claude Code **project** to a hosted Runbear Agent SDK agent. Reads
-every eligible file under the project, filters out secrets, env, config, and build
-output, and writes them to the agent's workspace file system at their relative paths
-through the Runbear `deploy_project_to_agent` MCP tool. The hosted agent then runs
-against the same `CLAUDE.md`, skills, subagents, docs, and code you have locally.
+Deploy a whole local Claude Code **project** to a hosted Runbear Agent SDK agent. The
+hosted agent then runs against the same `CLAUDE.md`, skills, subagents, docs, and code
+you have locally, with the directory layout preserved.
+
+It is **token-efficient**: the project is filtered, zipped, and uploaded directly to
+storage via a short-lived signed URL, so file contents never pass through the model's
+context — deploying a large project costs a near-constant number of tokens. The flow is
+`create_project_upload` → a packing script PUTs the zip → `finalize_project_upload`
+(the backend unzips, validates, and writes files into the agent workspace).
 
 Where `skill-uploader` deploys a single `SKILL.md`, `runbear:deploy` deploys the entire
-project and preserves its directory layout, including code and config files.
+project, including code and binary assets.
 
 | Skill | Description |
 |-------|-------------|
@@ -140,22 +144,22 @@ project and preserves its directory layout, including code and config files.
 ### Prerequisites
 
 - The **Runbear management MCP server** must be connected in your Claude Code session —
-  it provides the `deploy_project_to_agent` tool.
+  it provides the `create_project_upload` and `finalize_project_upload` tools.
 - The target **Runbear Agent SDK app URL or app UUID** (`--agent`). The agent must be of
   type Claude Agent SDK.
+- Local tools: `git`, `zip`, and `curl` on PATH.
 
 ### Usage
 
 ```
-/runbear:deploy .
 /runbear:deploy . --agent https://app.runbear.io/agents/<appId>
 /runbear:deploy ./my-project --agent <appId>
 /runbear:deploy ./my-project --agent <appId> --overwrite
 ```
 
-The backend caps a deploy at **300 files** and **5 MiB** total, and blocks secrets,
-`.env`, `.git/`, `node_modules/`, `.mcp.json`, and Claude settings files. Use
-`--overwrite` to replace files that already exist in the agent workspace.
+The backend caps a deploy at **500 files** / **25 MiB decompressed** / **50 MiB zip**,
+and blocks secrets, `.env`, `.git/`, `node_modules/`, `.mcp.json`, and Claude settings
+files. Use `--overwrite` to replace files that already exist in the agent workspace.
 
 ## License
 

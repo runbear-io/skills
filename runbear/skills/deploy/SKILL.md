@@ -1,35 +1,43 @@
 ---
-description: Deploy a local Claude Code project to a Runbear Claude Agent SDK agent's workspace file system through the Runbear `deploy_project_to_agent` MCP tool. Use when the user wants to deploy, publish, push, sync, or upload a local project (its files, CLAUDE.md, skills, agents, docs, and code) to a hosted Runbear Agent SDK agent identified by an app UUID or agent URL.
+description: Deploy a local Claude Code project to a Runbear Claude Agent SDK agent's workspace file system through the Runbear signed-URL upload flow (`create_project_upload` + `finalize_project_upload` MCP tools). Use when the user wants to deploy, publish, push, sync, or upload a local project (its files, CLAUDE.md, skills, agents, docs, and code) to a hosted Runbear Agent SDK agent identified by an app UUID or agent URL.
 argument-hint: "<project-path> --agent <appId-or-url> [--overwrite]"
-allowed-tools: Bash, Read, Glob, mcp__*__deploy_project_to_agent
+allowed-tools: Bash, Read, mcp__*__create_project_upload, mcp__*__finalize_project_upload
 ---
 
 # Deploy Local Project to Runbear
 
-Deploy a local Claude Code project to a Runbear Claude Agent SDK agent through the
-Runbear MCP tool `deploy_project_to_agent`. Every eligible file under the project is
-written to the agent's workspace file system at its relative path, so the hosted
-Agent SDK agent runs against the same `CLAUDE.md`, skills, subagents, docs, and code
-you have locally.
+Deploy a local Claude Code project to a Runbear Claude Agent SDK agent so the hosted
+agent runs against the same `CLAUDE.md`, skills, subagents, docs, and code you have
+locally. Files are written to the agent's workspace file system at their relative
+paths, preserving the directory layout (including code and binary assets).
 
-Unlike `skill-uploader:upload` (which deploys a single `SKILL.md`), this command
-deploys the **whole project** and preserves the directory layout, including code and
-config files.
+**How it works (token-efficient):** the project files are packed into a zip and
+uploaded directly to storage via a short-lived signed URL — the file contents never
+pass through the model's context, so deploying a large project costs a near-constant
+number of tokens. The flow is three steps:
+
+1. `create_project_upload` (MCP) → returns a signed upload URL.
+2. `scripts/pack-and-upload.sh` → filters, zips, and PUTs the archive to that URL.
+3. `finalize_project_upload` (MCP) → the backend unzips, validates, and writes the
+   files into the agent workspace.
+
+Unlike `skill-uploader:upload` (a single `SKILL.md`), this deploys the **whole
+project**.
 
 ## Prerequisites
 
 - The **Runbear management MCP server must be connected** in this Claude Code session —
-  it is what exposes `deploy_project_to_agent`. If the tool is unavailable, tell the
-  user to connect the Runbear MCP first and stop.
-- You need the target **Runbear Agent SDK app UUID or agent URL** (the `<appId>`). This
-  command runs outside the agent, so the target must be named explicitly via `--agent`.
-- The target agent must be of type **Claude Agent SDK**. The backend rejects other
-  agent types with `agent_must_be_claude_agent_sdk`.
+  it exposes `create_project_upload` and `finalize_project_upload`. If those tools are
+  unavailable, tell the user to connect the Runbear MCP first and stop.
+- The target **Runbear Agent SDK app UUID or agent URL** (`--agent`). This command runs
+  outside the agent, so the target must be named explicitly.
+- The target agent must be of type **Claude Agent SDK** (the backend rejects others with
+  `agent_must_be_claude_agent_sdk`).
+- Local tools: `git`, `zip`, and `curl` on PATH.
 
 ## Usage
 
 ```txt
-/runbear:deploy .
 /runbear:deploy . --agent https://app.runbear.io/agents/<appId>
 /runbear:deploy ./my-project --agent <appId>
 /runbear:deploy ./my-project --agent <appId> --overwrite
@@ -37,74 +45,82 @@ config files.
 
 ## Required inputs
 
-- Local project folder path (defaults to the current directory `.` if omitted).
-- Runbear Agent SDK app UUID or agent URL (`--agent`).
+- Local project folder path (defaults to `.` if omitted).
+- Runbear Agent SDK app UUID or agent URL (`--agent`, or a bare UUID argument).
 - Optional `--overwrite` to replace files that already exist in the agent workspace.
 
-If `--agent` is missing, ask for it only. Do not guess a UUID.
+If the agent target is missing, ask for it only. Do not guess a UUID.
 
 ## Safety rules
 
-- Read files only under the provided project folder. Do not follow symlinks out of it.
-- **Never upload these** (the backend also blocks them, but filter locally first so the
-  deploy is not rejected as a whole):
-  - Secrets and env files: `.env`, `.env.*`, anything containing API keys, tokens,
-    private keys, bearer tokens, or `postgres://user:pass@` style URLs.
-  - Config that leaks credentials or rewires the agent: `.mcp.json`,
-    `.claude/settings.json`, `.claude/settings.local.json`, `.claude.json`.
-  - `.git/`, `node_modules/`, and other dependency/build output directories
-    (`dist/`, `build/`, `.next/`, `.turbo/`, `coverage/`, `.venv/`, `vendor/`).
-  - Binary and archive files (images, PDFs, `.zip`, `.tar`, `.gz`, lockfiles that are
-    huge, compiled artifacts). The backend only accepts UTF-8 text content.
-- Respect the project's `.gitignore` — skip anything it ignores.
-- The backend caps a deploy at **300 files** and **5 MiB total**. If the project is
-  larger, deploy the meaningful subset (e.g. `CLAUDE.md`, `.claude/`, `docs/`, `src/`)
-  and tell the user what you skipped. Never silently truncate.
-- Treat local filtering as convenience; the backend validation result is authoritative.
+- The packing script filters files by path and pre-scans text files for secrets; the
+  backend re-validates authoritatively after unzip. Both layers block:
+  - Secrets / env: `.env`, `.env.*`, and any file containing API keys, tokens, private
+    keys, bearer tokens, or `postgres://user:pass@` URLs.
+  - Credential/agent config: `.mcp.json`, `.claude/settings.json`,
+    `.claude/settings.local.json`, `.claude.json`.
+  - `.git/`, `node_modules/`, and build/dep output (`dist/`, `build/`, `.next/`,
+    `.turbo/`, `.omc/`, `coverage/`, `.venv/`, `vendor/`, `__pycache__/`).
+- The script respects `.gitignore` (via `git ls-files`).
+- The backend caps a deploy at **500 files** / **25 MiB decompressed** / **50 MiB zip**.
+  If the project is larger, deploy a meaningful subset and tell the user what you left
+  out. Never silently truncate.
+- Do not read project file contents into your own context just to deploy them — let the
+  script handle the bytes. That is the whole point of the signed-URL flow.
 - Never ask the user for GCS bucket names, paths, or credentials.
 
 ## Steps
 
-1. Parse the arguments into `projectPath` (default `.`), `agentId`, and `overwrite`.
-2. Enumerate candidate files under `projectPath`, preserving paths **relative to
-   `projectPath`**. Prefer `git ls-files` when the folder is a git repo (it already
-   honours `.gitignore` and skips `.git/`); otherwise walk the tree and apply the
-   exclusions in "Safety rules". A good default command inside a repo:
+1. Parse arguments into `projectPath` (default `.`), `agentId` (from `--agent` or a bare
+   UUID/URL argument), and `overwrite` (default false).
+2. **Preview (optional but recommended for a first deploy):** run the packing script in
+   dry-run mode so you and the user can see what will be sent and what is filtered out,
+   without uploading:
 
    ```bash
-   git -C <projectPath> ls-files --cached --others --exclude-standard
+   bash <skill-dir>/scripts/pack-and-upload.sh --project <projectPath> --dry-run
    ```
 
-   Then drop any path matching the safety exclusions above.
-3. For each remaining file, skip it if it is binary/non-UTF-8 or clearly a secret/env
-   file. Read the rest as UTF-8.
-4. If the count exceeds 300 files or the total exceeds ~5 MiB, narrow to the meaningful
-   subset and note what was left out.
-5. Call the Runbear MCP tool `deploy_project_to_agent` **once** with all files:
+   It prints `{"fileCount":N,"zipBytes":B,"skippedCount":K,"skipped":[...]}`. If the file
+   count or skipped list looks wrong, fix filters/paths before deploying.
+3. **Request an upload URL:** call `create_project_upload`:
 
    ```json
-   {
-     "agentId": "<agent URL or UUID>",
-     "files": [
-       { "relativePath": "CLAUDE.md", "content": "<file content>" },
-       { "relativePath": ".claude/skills/foo/SKILL.md", "content": "<file content>" },
-       { "relativePath": "src/index.js", "content": "<file content>" }
-     ],
-     "overwrite": false
-   }
+   { "agentId": "<agent URL or UUID>" }
    ```
 
-6. Show the backend result. On `status: "deployed"`, report the file count and target
-   agent. On `status: "blocked"`, show the reasons and the offending `candidates`, then
-   help the user fix them (drop the file, or rerun with `--overwrite` for
+   On `status: "ready"` you get `{ uploadId, uploadUrl, maxBytes, expiresAt }`. On
+   `status: "blocked"`, report the reason (e.g. `agent_must_be_claude_agent_sdk`) and
+   stop.
+4. **Pack and upload** promptly (the URL expires — default ~15 min). Pass `maxBytes`
+   through so an oversized zip fails locally instead of at storage:
+
+   ```bash
+   bash <skill-dir>/scripts/pack-and-upload.sh \
+     --project <projectPath> --url "<uploadUrl>" --max-bytes <maxBytes>
+   ```
+
+   On success it prints `{"uploaded":true,"fileCount":N,"zipBytes":B,...}`. If it prints
+   `{"uploaded":false,"error":"..."}`, surface the error and stop (do not finalize).
+5. **Finalize:** call `finalize_project_upload`:
+
+   ```json
+   { "agentId": "<agent URL or UUID>", "uploadId": "<uploadId>", "overwrite": false }
+   ```
+
+6. Show the result. On `status: "deployed"`, report `fileCount` and the target agent
+   name. On `status: "blocked"`, show `reasons` and offending `candidates`, then help
+   the user fix them (remove the file, or rerun with `--overwrite` for
    `files_already_exist`).
+
+`<skill-dir>` is this skill's base directory (the folder containing this `SKILL.md`).
 
 ## Success response
 
 ```txt
 ✅ Project deployed
 agent: <agentName>
-files: <fileCount> written to the agent workspace
+files: <fileCount> written to the agent workspace  (<K> filtered out locally)
 next: mention the Runbear agent again; Agent SDK files load on the next activation
 ```
 
@@ -120,12 +136,11 @@ candidates:
 
 Common `reasons`:
 
-- `invalid_agent_id` — the `--agent` value is not a UUID or a valid Runbear agent URL.
-- `agent_not_found_or_not_readable` — no such agent in your org, or no read access.
-- `agent_must_be_claude_agent_sdk` — the target is not a Claude Agent SDK agent.
-- `agent_modify_permission_required` — you lack write permission on the agent.
-- `files_already_exist` — one or more files exist; rerun with `--overwrite` to replace.
-- `secret_detected:<label>:<path>` / `env_file_not_supported:<path>` /
-  `forbidden_directory:<path>` / `forbidden_config_file:<path>` — remove that file and
-  redeploy.
-- `too_many_files` / `upload_too_large` — deploy a smaller subset.
+- From `create_project_upload`: `invalid_agent_id`, `agent_not_found_or_not_readable`,
+  `agent_must_be_claude_agent_sdk`, `agent_modify_permission_required`,
+  `workspace_gcs_bucket_not_configured`.
+- From `finalize_project_upload`: `upload_not_found` (URL never uploaded, or expired
+  staging), `invalid_zip`, `zip_too_large`, `too_many_files`, `upload_too_large`,
+  `encrypted_zip_entry`, `files_already_exist` (rerun with `--overwrite`), and per-file
+  `secret_detected:<label>:<path>` / `env_file_not_supported:<path>` /
+  `forbidden_directory:<path>` / `forbidden_config_file:<path>` / `invalid_path:<path>`.
