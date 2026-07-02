@@ -111,9 +111,13 @@ if [ "$DRY_RUN" -eq 1 ]; then
   exit 0
 fi
 
+# PUT the whole archive in one request. The upload URL is a GCS resumable
+# session URI, so include Content-Range spanning the full object so GCS
+# finalizes the upload (and returns 200) instead of leaving it resumable (308).
 HTTP_CODE=$(curl -sS -o /dev/null -w '%{http_code}' \
   -X PUT \
   -H 'Content-Type: application/zip' \
+  -H "Content-Range: bytes 0-$((ZIP_BYTES - 1))/${ZIP_BYTES}" \
   --data-binary "@${ZIPFILE}" \
   "$URL") || fail "upload failed (curl error)"
 

@@ -92,8 +92,8 @@ If the agent target is missing, ask for it only. Do not guess a UUID.
    On `status: "ready"` you get `{ uploadId, uploadUrl, maxBytes, expiresAt }`. On
    `status: "blocked"`, report the reason (e.g. `agent_must_be_claude_agent_sdk`) and
    stop.
-4. **Pack and upload** promptly (the URL expires — default ~15 min). Pass `maxBytes`
-   through so an oversized zip fails locally instead of at storage:
+4. **Pack and upload** promptly (the upload URL is single-use and time-limited).
+   Pass `maxBytes` through so an oversized zip fails locally instead of at storage:
 
    ```bash
    bash <skill-dir>/scripts/pack-and-upload.sh \
