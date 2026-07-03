@@ -129,7 +129,7 @@ hosted agent then runs against the same `CLAUDE.md`, skills, subagents, docs, an
 you have locally, with the directory layout preserved.
 
 It is **token-efficient**: the project is filtered, zipped, and uploaded directly to
-storage via a short-lived signed URL, so file contents never pass through the model's
+storage via a one-time upload URL, so file contents never pass through the model's
 context — deploying a large project costs a near-constant number of tokens. The flow is
 `create_project_upload` → a packing script PUTs the zip → `finalize_project_upload`
 (the backend unzips, validates, and writes files into the agent workspace).
