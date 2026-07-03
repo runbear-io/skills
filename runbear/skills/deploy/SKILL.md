@@ -1,7 +1,7 @@
 ---
-description: Deploy a local Claude Code project to a Runbear Claude Agent SDK agent's workspace file system through the Runbear signed-URL upload flow (`create_project_upload` + `finalize_project_upload` MCP tools). Use when the user wants to deploy, publish, push, sync, or upload a local project (its files, CLAUDE.md, skills, agents, docs, and code) to a hosted Runbear Agent SDK agent identified by an app UUID or agent URL — or, with `--new <agentName>`, to create a brand-new Claude Agent SDK agent and deploy the project to it in one step.
-argument-hint: "<appId-or-url> | --new <agentName> [--cwd <project-path>] [--overwrite]"
-allowed-tools: Bash, Read, mcp__*__create_agent, mcp__*__create_project_upload, mcp__*__finalize_project_upload
+description: Deploy a local Claude Code project to a Runbear Claude Agent SDK agent's workspace file system through the Runbear signed-URL upload flow (`create_project_upload` + `finalize_project_upload` MCP tools). Use when the user wants to deploy, publish, push, sync, or upload a local project (its files, CLAUDE.md, skills, agents, docs, and code) to a hosted Runbear Agent SDK agent identified by an app UUID, agent URL, or agent name (fuzzy-matched) — or, with `--new <agentName>`, to create a brand-new Claude Agent SDK agent and deploy the project to it in one step.
+argument-hint: "<appId-or-url-or-name> | --new <agentName> [--cwd <project-path>] [--overwrite]"
+allowed-tools: Bash, Read, mcp__*__list_agents, mcp__*__create_agent, mcp__*__create_project_upload, mcp__*__finalize_project_upload
 ---
 
 # Deploy Local Project to Runbear
@@ -29,9 +29,9 @@ project**.
 - The **Runbear management MCP server must be connected** in this Claude Code session —
   it exposes `create_project_upload` and `finalize_project_upload`. If those tools are
   unavailable, tell the user to connect the Runbear MCP first and stop.
-- The target **Runbear Agent SDK app UUID or agent URL** (the first positional
-  argument). This command runs outside the agent, so the target must be named
-  explicitly.
+- The target **Runbear Agent SDK app UUID, agent URL, or agent name** (the first
+  positional argument). This command runs outside the agent, so the target must be named
+  explicitly. A name is fuzzy-matched against your agents via `list_agents`.
 - The target agent must be of type **Claude Agent SDK** (the backend rejects others with
   `agent_must_be_claude_agent_sdk`).
 - Local tools: `git`, `zip`, and `curl` on PATH.
@@ -43,9 +43,13 @@ Deploy to an existing agent:
 ```txt
 /runbear:deploy <appId>
 /runbear:deploy https://app.runbear.io/agents/<appId>
+/runbear:deploy "My Agent"
 /runbear:deploy <appId> --cwd ./my-project
-/runbear:deploy <appId> --cwd ./my-project --overwrite
+/runbear:deploy "My Agent" --cwd ./my-project --overwrite
 ```
+
+A name is fuzzy-matched; if several agents match (or share the name), you'll be shown
+the matches with their app IDs to pick from.
 
 Create a new Claude Agent SDK agent and deploy to it in one step:
 
@@ -58,8 +62,9 @@ Create a new Claude Agent SDK agent and deploy to it in one step:
 
 Exactly one target is required:
 
-- **Existing agent** — a Runbear Agent SDK app UUID or agent URL as the **first
-  positional argument**, or
+- **Existing agent** — a Runbear Agent SDK app UUID, agent URL, or agent name as the
+  **first positional argument** (a name is fuzzy-matched, with interactive selection when
+  more than one agent matches), or
 - **New agent** — `--new <agentName>`, which creates a fresh Claude Agent SDK agent
   named `<agentName>` and deploys to it.
 
@@ -92,21 +97,53 @@ UUID, and do not create an agent unless the user passed `--new`.
 
 ## Steps
 
-1. Parse arguments into `agentId` (the first positional argument — a bare UUID or agent
-   URL), `newAgentName` (from `--new`), `projectPath` (from `--cwd`, default `.`), and
-   `overwrite` (default false). `agentId` and `--new` are mutually exclusive; if both are
-   present, ask the user which they meant and stop.
-2. **If `--new <agentName>` was given, create the agent first.** Call `create_agent`:
+1. Parse arguments into `target` (the first positional argument — a UUID, agent URL, or
+   agent name), `newAgentName` (from `--new`), `projectPath` (from `--cwd`, default `.`),
+   and `overwrite` (default false). `target` and `--new` are mutually exclusive; if both
+   are present, ask the user which they meant and stop.
+2. **Resolve the target into an `agentId`.**
 
-   ```json
-   { "name": "<agentName>", "type": "claude-agent-sdk" }
-   ```
+   - **`--new <agentName>`** — create the agent first. Call `create_agent`:
 
-   Use the returned `id` as `agentId` for the rest of the flow, and show the returned
-   `url` to the user so they can open the new agent's setup page. If `create_agent` is
-   unavailable (e.g. the Runbear MCP is connected in team mode, where it is hidden), tell
-   the user to connect the Runbear MCP at user scope and stop. Do not fall back to an
-   existing agent.
+     ```json
+     { "name": "<agentName>", "type": "claude-agent-sdk" }
+     ```
+
+     Use the returned `id` as `agentId`, and show the returned `url` to the user so they
+     can open the new agent's setup page. If `create_agent` is unavailable (e.g. the
+     Runbear MCP is connected in team mode, where it is hidden), tell the user to connect
+     the Runbear MCP at user scope and stop. Do not fall back to an existing agent.
+   - **`target` is a UUID or a Runbear agent URL** (e.g. `.../agents/<uuid>`) — use it
+     directly as `agentId` (extract the UUID from a URL).
+   - **`target` is anything else** — treat it as an **agent name** and resolve it with
+     `list_agents`, passing the name as `query` (a case-insensitive substring / fuzzy
+     filter):
+
+     ```json
+     { "query": "<name>" }
+     ```
+
+     - **No matches** — retry once with a shorter/normalized query (e.g. the most
+       distinctive word) to catch typos or partial names. If still nothing, tell the user
+       no agent matched `<name>`, suggest `--new "<name>"` to create one, and stop. Do not
+       guess a UUID.
+     - **Exactly one match** — use its `id` as `agentId`; confirm by showing its name and
+       app ID before continuing.
+     - **More than one match** (similar names, or several agents sharing the same name) —
+       do **not** guess. Present an interactive selection listing each candidate so the
+       user can pick the right one, then use the chosen agent's `id`. Show, per candidate,
+       the **name**, **app ID**, and a disambiguator (created date, and whether it was
+       `createdByMe`). For example:
+
+       ```txt
+       Multiple agents match "support". Which one?
+       1. Support Bot     — 943276d9-a4a6-4d49-8df4-6e0fb05b2ab7  (created 2026-05-01, yours)
+       2. Support Triage  — 7c2b5b6e-b7bf-4ec0-8211-3393e010e857  (created 2026-06-12)
+       ```
+
+       If `list_agents` reports more results than shown (a non-null `nextCursor`), say so
+       and offer to narrow the name rather than silently truncating.
+
 3. **Preview (optional but recommended for a first deploy):** run the packing script in
    dry-run mode so you and the user can see what will be sent and what is filtered out,
    without uploading:
