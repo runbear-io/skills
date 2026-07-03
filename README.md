@@ -10,6 +10,7 @@ Skills for exposing Claude Agent via HTTP, Slack, and Discord.
 - [dispatch-slack](#dispatch-slack)
 - [dispatch-discord](#dispatch-discord)
 - [skill-uploader](#skill-uploader)
+- [runbear](#runbear)
 - [License](#license)
 
 ## Use Cases
@@ -27,6 +28,7 @@ Skills for exposing Claude Agent via HTTP, Slack, and Discord.
 /plugin install dispatch-slack@runbear-skills
 /plugin install dispatch-discord@runbear-skills
 /plugin install skill-uploader@runbear-skills
+/plugin install runbear@runbear-skills
 ```
 
 ## dispatch-http
@@ -119,6 +121,45 @@ skill folder, runs a safety preflight, and deploys each `SKILL.md` through the R
 
 The backend deploys **one skill per call**. If the folder contains multiple `SKILL.md`
 files, each is uploaded independently and reported per skill.
+
+## runbear
+
+Deploy a whole local Claude Code **project** to a hosted Runbear Agent SDK agent. The
+hosted agent then runs against the same `CLAUDE.md`, skills, subagents, docs, and code
+you have locally, with the directory layout preserved.
+
+It is **token-efficient**: the project is filtered, zipped, and uploaded directly to
+storage via a one-time upload URL, so file contents never pass through the model's
+context — deploying a large project costs a near-constant number of tokens. The flow is
+`create_project_upload` → a packing script PUTs the zip → `finalize_project_upload`
+(the backend unzips, validates, and writes files into the agent workspace).
+
+Where `skill-uploader` deploys a single `SKILL.md`, `runbear:deploy` deploys the entire
+project, including code and binary assets.
+
+| Skill | Description |
+|-------|-------------|
+| `deploy` | Deploy a local project's files to a Runbear Agent SDK agent identified by an app URL or app UUID |
+
+### Prerequisites
+
+- The **Runbear management MCP server** must be connected in your Claude Code session —
+  it provides the `create_project_upload` and `finalize_project_upload` tools.
+- The target **Runbear Agent SDK app URL or app UUID** (`--agent`). The agent must be of
+  type Claude Agent SDK.
+- Local tools: `git`, `zip`, and `curl` on PATH.
+
+### Usage
+
+```
+/runbear:deploy . --agent https://app.runbear.io/agents/<appId>
+/runbear:deploy ./my-project --agent <appId>
+/runbear:deploy ./my-project --agent <appId> --overwrite
+```
+
+The backend caps a deploy at **500 files** / **25 MiB decompressed** / **50 MiB zip**,
+and blocks secrets, `.env`, `.git/`, `node_modules/`, `.mcp.json`, and Claude settings
+files. Use `--overwrite` to replace files that already exist in the agent workspace.
 
 ## License
 

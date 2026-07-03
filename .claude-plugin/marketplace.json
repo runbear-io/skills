@@ -34,6 +34,12 @@
       "description": "Deploy local Claude skills to a hosted Runbear Agent SDK agent",
       "source": "./skill-uploader",
       "skills": ["./skills/upload"]
+    },
+    {
+      "name": "runbear",
+      "description": "Deploy a local Claude Code project to a hosted Runbear Agent SDK agent",
+      "source": "./runbear",
+      "skills": ["./skills/deploy"]
     }
   ]
 }
