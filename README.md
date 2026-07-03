@@ -130,16 +130,19 @@ you have locally, with the directory layout preserved.
 
 | Skill | Description |
 |-------|-------------|
-| `deploy` | Deploy a local project's files to a Runbear Agent SDK agent identified by an app URL or app UUID |
+| `deploy` | Deploy a local project's files to a Runbear Agent SDK agent identified by an app URL, app UUID, or agent name |
+| `connect-slack` | Connect a Runbear Agent SDK agent to Slack — creates a workspace-specific custom bot by default, and can join channels |
 
 ### Prerequisites
 
 - The **Runbear management MCP server** must be connected in your Claude Code session —
   it provides the `create_project_upload` and `finalize_project_upload` tools (plus
   `create_agent` for the `--new` flow).
-- The target **Runbear Agent SDK app URL or app UUID** (the first argument), or `--new
-  "<agentName>"` to create a fresh Claude Agent SDK agent and deploy to it. An existing
-  target agent must be of type Claude Agent SDK.
+- The target **Runbear Agent SDK app URL, app UUID, or agent name** (the first
+  argument) — a name is fuzzy-matched, with an interactive picker when more than one
+  agent matches — or `--new "<agentName>"` to create a fresh Claude Agent SDK agent and
+  deploy to it. An existing target agent must be of type Claude Agent SDK. Resolving a
+  name uses the `list_agents` tool.
 - Local tools: `git`, `zip`, and `curl` on PATH.
 
 ### Usage
@@ -149,8 +152,9 @@ Deploy to an existing agent:
 ```
 /runbear:deploy <appId>
 /runbear:deploy https://app.runbear.io/agents/<appId>
+/runbear:deploy "My Agent"
 /runbear:deploy <appId> --cwd ./my-project
-/runbear:deploy <appId> --cwd ./my-project --overwrite
+/runbear:deploy "My Agent" --cwd ./my-project --overwrite
 ```
 
 Or create a new Claude Agent SDK agent and deploy to it in one step:
@@ -163,6 +167,18 @@ Or create a new Claude Agent SDK agent and deploy to it in one step:
 The backend caps a deploy at **500 files** / **25 MiB decompressed** / **50 MiB zip**,
 and blocks secrets, `.env`, `.git/`, `node_modules/`, `.mcp.json`, and Claude settings
 files. Use `--overwrite` to replace files that already exist in the agent workspace.
+
+Connect an agent to Slack (a workspace-specific custom bot by default):
+
+```
+/runbear:connect-slack "My Agent"
+/runbear:connect-slack <appId> --bot-name "My Bot" --channel project-team
+/runbear:connect-slack <appId> --mode default
+```
+
+Custom mode returns a Runbear web-app link to finish creating the Slack app; joining
+public channels is then handled through the MCP. Use `--mode default` to attach the
+shared @Runbear bot instead.
 
 ## License
 
