@@ -135,17 +135,29 @@ you have locally, with the directory layout preserved.
 ### Prerequisites
 
 - The **Runbear management MCP server** must be connected in your Claude Code session —
-  it provides the `create_project_upload` and `finalize_project_upload` tools.
-- The target **Runbear Agent SDK app URL or app UUID** (`--agent`). The agent must be of
-  type Claude Agent SDK.
+  it provides the `create_project_upload` and `finalize_project_upload` tools (plus
+  `create_agent` for the `--new` flow).
+- The target **Runbear Agent SDK app URL or app UUID** (the first argument), or `--new
+  "<agentName>"` to create a fresh Claude Agent SDK agent and deploy to it. An existing
+  target agent must be of type Claude Agent SDK.
 - Local tools: `git`, `zip`, and `curl` on PATH.
 
 ### Usage
 
+Deploy to an existing agent:
+
 ```
-/runbear:deploy . --agent https://app.runbear.io/agents/<appId>
-/runbear:deploy ./my-project --agent <appId>
-/runbear:deploy ./my-project --agent <appId> --overwrite
+/runbear:deploy <appId>
+/runbear:deploy https://app.runbear.io/agents/<appId>
+/runbear:deploy <appId> --cwd ./my-project
+/runbear:deploy <appId> --cwd ./my-project --overwrite
+```
+
+Or create a new Claude Agent SDK agent and deploy to it in one step:
+
+```
+/runbear:deploy --new "My Agent"
+/runbear:deploy --new "My Agent" --cwd ./my-project
 ```
 
 The backend caps a deploy at **500 files** / **25 MiB decompressed** / **50 MiB zip**,

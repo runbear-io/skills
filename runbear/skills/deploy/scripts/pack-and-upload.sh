@@ -5,8 +5,11 @@
 # model, so deploying a large project costs O(1) tokens.
 #
 # Usage:
-#   pack-and-upload.sh --project <path> --url <signedUploadUrl> [--max-bytes N]
-#   pack-and-upload.sh --project <path> --dry-run          # preview, no upload
+#   pack-and-upload.sh --cwd <path> --url <signedUploadUrl> [--max-bytes N]
+#   pack-and-upload.sh --cwd <path> --dry-run          # preview, no upload
+#
+# --cwd is the local project directory (defaults to "."); --project is a
+# backward-compatible alias.
 #
 # Output: a JSON object on stdout, e.g.
 #   {"uploaded":true,"fileCount":42,"zipBytes":83912,"skippedCount":3,"skipped":[...]}
@@ -19,14 +22,14 @@
 
 set -eu
 
-PROJECT=""
+PROJECT="."
 URL=""
 MAX_BYTES=0
 DRY_RUN=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --project) PROJECT="${2:-}"; shift 2 ;;
+    --cwd|--project) PROJECT="${2:-}"; shift 2 ;;
     --url) URL="${2:-}"; shift 2 ;;
     --max-bytes) MAX_BYTES="${2:-0}"; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
@@ -36,7 +39,7 @@ done
 
 fail() { printf '{"uploaded":false,"error":"%s"}\n' "$1"; exit 1; }
 
-[ -n "$PROJECT" ] || fail "missing --project"
+[ -n "$PROJECT" ] || fail "missing --cwd"
 [ -d "$PROJECT" ] || fail "project path is not a directory: $PROJECT"
 [ "$DRY_RUN" -eq 1 ] || [ -n "$URL" ] || fail "missing --url (or pass --dry-run)"
 command -v zip >/dev/null 2>&1 || fail "the 'zip' command is required but not installed"
@@ -50,7 +53,17 @@ EXCLUDE_RE='(^|/)(\.git|node_modules|dist|build|\.next|\.turbo|\.omc|coverage|\.
 
 # Secret content patterns — skip any text file that matches so a stray key does
 # not fail the whole server-side deploy. grep -I skips binary files.
-SECRET_RE='-----BEGIN [A-Z ]*PRIVATE KEY-----|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{32,}|gh[pousr]_[A-Za-z0-9_]{30,}|xox[baprs]-[A-Za-z0-9-]{20,}|AIza[0-9A-Za-z_-]{35}|(postgres|postgresql|mysql|mongodb)://[^[:space:]:@]+:[^[:space:]@]+@'
+SECRET_RE='-----BEGIN [A-Z ]*PRIVATE KEY-----|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{32,}|gh[pousr]_[A-Za-z0-9_]{30,}|xox[baprs]-[A-Za-z0-9-]{20,}|AIza[0-9A-Za-z_-]{35}'
+
+# Connection strings are handled separately (two-stage): DBURL_RE finds any
+# scheme://user:pass@ URL, then DBURL_PLACEHOLDER_RE subtracts documentation
+# examples (angle-bracket `<password>`, `${...}`/`{{...}}` template refs, or a
+# common placeholder word) so a file can document an example URL without being
+# quarantined. grep ERE has no negative lookahead, hence the subtract step.
+# Classes avoid the `[^:@/]+:[^@/]+@` shape, which ugrep (a common grep-alias)
+# mishandles under POSIX leftmost-longest matching.
+DBURL_RE='(postgres|postgresql|mysql|mongodb)://[^@/]*:[^@/]*@'
+DBURL_PLACEHOLDER_RE='(postgres|postgresql|mysql|mongodb)://([^@]*[<>]|[^@]*([$][{]|[{][{])|[^:@/]+:(pass|passwd|pwd|password|secret|changeme|example|placeholder|redacted|your[_-]?password|x{3,})@)'
 
 cd "$PROJECT_ABS"
 
@@ -79,6 +92,16 @@ while IFS= read -r f; do
     continue
   fi
   if grep -IlE -e "$SECRET_RE" -- "$f" >/dev/null 2>&1; then
+    printf '%s (secret)\n' "$f" >> "$SKIP_LIST"
+    continue
+  fi
+  # DB connection strings: flag only if a matching line survives removing the
+  # placeholder/example forms (grep -I skips binary files here too). Guard with a
+  # presence check first: piping an EMPTY stage-1 result into `grep -qv` reports
+  # success under ugrep (unlike GNU/BSD grep), which would false-positive files
+  # with no DB URL at all.
+  if grep -IqE -e "$DBURL_RE" -- "$f" 2>/dev/null &&
+     grep -IE -e "$DBURL_RE" -- "$f" 2>/dev/null | grep -qvE -e "$DBURL_PLACEHOLDER_RE"; then
     printf '%s (secret)\n' "$f" >> "$SKIP_LIST"
     continue
   fi

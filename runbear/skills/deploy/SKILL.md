@@ -1,7 +1,7 @@
 ---
-description: Deploy a local Claude Code project to a Runbear Claude Agent SDK agent's workspace file system through the Runbear signed-URL upload flow (`create_project_upload` + `finalize_project_upload` MCP tools). Use when the user wants to deploy, publish, push, sync, or upload a local project (its files, CLAUDE.md, skills, agents, docs, and code) to a hosted Runbear Agent SDK agent identified by an app UUID or agent URL.
-argument-hint: "<project-path> --agent <appId-or-url> [--overwrite]"
-allowed-tools: Bash, Read, mcp__*__create_project_upload, mcp__*__finalize_project_upload
+description: Deploy a local Claude Code project to a Runbear Claude Agent SDK agent's workspace file system through the Runbear signed-URL upload flow (`create_project_upload` + `finalize_project_upload` MCP tools). Use when the user wants to deploy, publish, push, sync, or upload a local project (its files, CLAUDE.md, skills, agents, docs, and code) to a hosted Runbear Agent SDK agent identified by an app UUID or agent URL — or, with `--new <agentName>`, to create a brand-new Claude Agent SDK agent and deploy the project to it in one step.
+argument-hint: "<appId-or-url> | --new <agentName> [--cwd <project-path>] [--overwrite]"
+allowed-tools: Bash, Read, mcp__*__create_agent, mcp__*__create_project_upload, mcp__*__finalize_project_upload
 ---
 
 # Deploy Local Project to Runbear
@@ -29,27 +29,48 @@ project**.
 - The **Runbear management MCP server must be connected** in this Claude Code session —
   it exposes `create_project_upload` and `finalize_project_upload`. If those tools are
   unavailable, tell the user to connect the Runbear MCP first and stop.
-- The target **Runbear Agent SDK app UUID or agent URL** (`--agent`). This command runs
-  outside the agent, so the target must be named explicitly.
+- The target **Runbear Agent SDK app UUID or agent URL** (the first positional
+  argument). This command runs outside the agent, so the target must be named
+  explicitly.
 - The target agent must be of type **Claude Agent SDK** (the backend rejects others with
   `agent_must_be_claude_agent_sdk`).
 - Local tools: `git`, `zip`, and `curl` on PATH.
 
 ## Usage
 
+Deploy to an existing agent:
+
 ```txt
-/runbear:deploy . --agent https://app.runbear.io/agents/<appId>
-/runbear:deploy ./my-project --agent <appId>
-/runbear:deploy ./my-project --agent <appId> --overwrite
+/runbear:deploy <appId>
+/runbear:deploy https://app.runbear.io/agents/<appId>
+/runbear:deploy <appId> --cwd ./my-project
+/runbear:deploy <appId> --cwd ./my-project --overwrite
+```
+
+Create a new Claude Agent SDK agent and deploy to it in one step:
+
+```txt
+/runbear:deploy --new "My Agent"
+/runbear:deploy --new "My Agent" --cwd ./my-project
 ```
 
 ## Required inputs
 
-- Local project folder path (defaults to `.` if omitted).
-- Runbear Agent SDK app UUID or agent URL (`--agent`, or a bare UUID argument).
-- Optional `--overwrite` to replace files that already exist in the agent workspace.
+Exactly one target is required:
 
-If the agent target is missing, ask for it only. Do not guess a UUID.
+- **Existing agent** — a Runbear Agent SDK app UUID or agent URL as the **first
+  positional argument**, or
+- **New agent** — `--new <agentName>`, which creates a fresh Claude Agent SDK agent
+  named `<agentName>` and deploys to it.
+
+Plus:
+
+- Optional `--cwd <path>` for the local project folder (defaults to `.` if omitted).
+- Optional `--overwrite` to replace files that already exist in the agent workspace
+  (irrelevant with `--new`, whose workspace starts empty).
+
+If neither a target nor `--new` is given, ask which agent to deploy to. Do not guess a
+UUID, and do not create an agent unless the user passed `--new`.
 
 ## Safety rules
 
@@ -71,19 +92,32 @@ If the agent target is missing, ask for it only. Do not guess a UUID.
 
 ## Steps
 
-1. Parse arguments into `projectPath` (default `.`), `agentId` (from `--agent` or a bare
-   UUID/URL argument), and `overwrite` (default false).
-2. **Preview (optional but recommended for a first deploy):** run the packing script in
+1. Parse arguments into `agentId` (the first positional argument — a bare UUID or agent
+   URL), `newAgentName` (from `--new`), `projectPath` (from `--cwd`, default `.`), and
+   `overwrite` (default false). `agentId` and `--new` are mutually exclusive; if both are
+   present, ask the user which they meant and stop.
+2. **If `--new <agentName>` was given, create the agent first.** Call `create_agent`:
+
+   ```json
+   { "name": "<agentName>", "type": "claude-agent-sdk" }
+   ```
+
+   Use the returned `id` as `agentId` for the rest of the flow, and show the returned
+   `url` to the user so they can open the new agent's setup page. If `create_agent` is
+   unavailable (e.g. the Runbear MCP is connected in team mode, where it is hidden), tell
+   the user to connect the Runbear MCP at user scope and stop. Do not fall back to an
+   existing agent.
+3. **Preview (optional but recommended for a first deploy):** run the packing script in
    dry-run mode so you and the user can see what will be sent and what is filtered out,
    without uploading:
 
    ```bash
-   bash <skill-dir>/scripts/pack-and-upload.sh --project <projectPath> --dry-run
+   bash <skill-dir>/scripts/pack-and-upload.sh --cwd <projectPath> --dry-run
    ```
 
    It prints `{"fileCount":N,"zipBytes":B,"skippedCount":K,"skipped":[...]}`. If the file
    count or skipped list looks wrong, fix filters/paths before deploying.
-3. **Request an upload URL:** call `create_project_upload`:
+4. **Request an upload URL:** call `create_project_upload`:
 
    ```json
    { "agentId": "<agent URL or UUID>" }
@@ -92,23 +126,23 @@ If the agent target is missing, ask for it only. Do not guess a UUID.
    On `status: "ready"` you get `{ uploadId, uploadUrl, maxBytes, expiresAt }`. On
    `status: "blocked"`, report the reason (e.g. `agent_must_be_claude_agent_sdk`) and
    stop.
-4. **Pack and upload** promptly (the upload URL is single-use and time-limited).
+5. **Pack and upload** promptly (the upload URL is single-use and time-limited).
    Pass `maxBytes` through so an oversized zip fails locally instead of at storage:
 
    ```bash
    bash <skill-dir>/scripts/pack-and-upload.sh \
-     --project <projectPath> --url "<uploadUrl>" --max-bytes <maxBytes>
+     --cwd <projectPath> --url "<uploadUrl>" --max-bytes <maxBytes>
    ```
 
    On success it prints `{"uploaded":true,"fileCount":N,"zipBytes":B,...}`. If it prints
    `{"uploaded":false,"error":"..."}`, surface the error and stop (do not finalize).
-5. **Finalize:** call `finalize_project_upload`:
+6. **Finalize:** call `finalize_project_upload`:
 
    ```json
    { "agentId": "<agent URL or UUID>", "uploadId": "<uploadId>", "overwrite": false }
    ```
 
-6. Show the result. On `status: "deployed"`, report `fileCount` and the target agent
+7. Show the result. On `status: "deployed"`, report `fileCount` and the target agent
    name. On `status: "blocked"`, show `reasons` and offending `candidates`, then help
    the user fix them (remove the file, or rerun with `--overwrite` for
    `files_already_exist`).
