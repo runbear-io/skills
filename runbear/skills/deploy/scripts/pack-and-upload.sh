@@ -7,9 +7,12 @@
 # Usage:
 #   pack-and-upload.sh --cwd <path> --url <signedUploadUrl> [--max-bytes N]
 #   pack-and-upload.sh --cwd <path> --dry-run          # preview, no upload
+#   pack-and-upload.sh --cwd <path> --exclude-path .claude/skills/foo ...
 #
 # --cwd is the local project directory (defaults to "."); --project is a
-# backward-compatible alias.
+# backward-compatible alias. --exclude-path <relPath> (repeatable) drops a
+# specific project-relative file or directory subtree from the archive — used
+# to omit deselected skills. It matches the path exactly or any file beneath it.
 #
 # Output: a JSON object on stdout, e.g.
 #   {"uploaded":true,"fileCount":42,"zipBytes":83912,"skippedCount":3,"skipped":[...]}
@@ -26,12 +29,18 @@ PROJECT="."
 URL=""
 MAX_BYTES=0
 DRY_RUN=0
+EXCLUDE_PATHS=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --cwd|--project) PROJECT="${2:-}"; shift 2 ;;
     --url) URL="${2:-}"; shift 2 ;;
     --max-bytes) MAX_BYTES="${2:-0}"; shift 2 ;;
+    --exclude-path)
+      ep="${2:-}"; shift 2
+      ep="${ep#./}"; ep="${ep%/}"
+      if [ -n "$ep" ]; then EXCLUDE_PATHS+=("$ep"); fi
+      ;;
     --dry-run) DRY_RUN=1; shift ;;
     *) printf '{"uploaded":false,"error":"unknown argument: %s"}\n' "$1"; exit 2 ;;
   esac
@@ -49,7 +58,20 @@ PROJECT_ABS="$(cd "$PROJECT" && pwd)"
 
 # Paths we never upload. The backend also blocks these, but filtering here keeps
 # the deploy from being rejected wholesale and avoids leaking secrets to storage.
-EXCLUDE_RE='(^|/)(\.git|node_modules|dist|build|\.next|\.turbo|\.omc|coverage|\.venv|venv|vendor|__pycache__|\.pytest_cache|\.mypy_cache)(/|$)|(^|/)\.env(\..*)?$|(^|/)\.mcp\.json$|(^|/)\.claude\.json$|(^|/)\.claude/settings(\.local)?\.json$|(^|/)\.DS_Store$'
+EXCLUDE_RE='(^|/)(\.git|\.runbear|node_modules|dist|build|\.next|\.turbo|\.omc|coverage|\.venv|venv|vendor|__pycache__|\.pytest_cache|\.mypy_cache)(/|$)|(^|/)\.env(\..*)?$|(^|/)\.mcp\.json$|(^|/)\.claude\.json$|(^|/)\.claude/settings(\.local)?\.json$|(^|/)\.DS_Store$'
+
+# Caller-supplied path exclusions (--exclude-path). Matches a file exactly or
+# any file beneath it (directory-prefix). Kept separate from EXCLUDE_RE so the
+# skill can drop deselected skills without rewriting the static filter.
+is_excluded_path() {
+  f="$1"
+  for p in ${EXCLUDE_PATHS[@]+"${EXCLUDE_PATHS[@]}"}; do
+    case "$f" in
+      "$p" | "$p"/*) return 0 ;;
+    esac
+  done
+  return 1
+}
 
 # Secret content patterns — skip any text file that matches so a stray key does
 # not fail the whole server-side deploy. grep -I skips binary files.
@@ -89,6 +111,10 @@ while IFS= read -r f; do
   [ -n "$f" ] || continue
   if printf '%s' "$f" | grep -qE -e "$EXCLUDE_RE"; then
     printf '%s\n' "$f" >> "$SKIP_LIST"
+    continue
+  fi
+  if is_excluded_path "$f"; then
+    printf '%s (excluded)\n' "$f" >> "$SKIP_LIST"
     continue
   fi
   if grep -IlE -e "$SECRET_RE" -- "$f" >/dev/null 2>&1; then
