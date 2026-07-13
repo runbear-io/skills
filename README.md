@@ -124,20 +124,46 @@ files, each is uploaded independently and reported per skill.
 
 ## runbear
 
-Deploy a whole local Claude Code **project** to a hosted Runbear Agent SDK agent. The
-hosted agent then runs against the same `CLAUDE.md`, skills, subagents, docs, and code
-you have locally, with the directory layout preserved.
+Deploy a whole local Claude Code **project** to a hosted Runbear Agent SDK agent **and
+configure the MCPs and skills it needs**, so colleagues can use your agent without you
+doing it on their behalf. The hosted agent runs against the same `CLAUDE.md`, skills,
+subagents, docs, and code you have locally, with the directory layout preserved.
 
 | Skill | Description |
 |-------|-------------|
-| `deploy` | Deploy a local project's files to a Runbear Agent SDK agent identified by an app URL, app UUID, or agent name |
+| `deploy` | Deploy a local project's files, select which local MCPs the agent gets (shared vs per-user auth per MCP), and curate its skills — all saved to a committed manifest for one-command redeploys |
 | `connect-slack` | Connect a Runbear Agent SDK agent to Slack — creates a workspace-specific custom bot by default, and can join channels |
+
+### What `deploy` configures
+
+- **Files** — uploaded via a signed URL (bytes never pass through the model context).
+- **MCPs** — pick from your locally-configured MCP servers (project + user scope);
+  each is attached to the agent as a Runbear catalog app (`attach_app`) or a custom
+  MCP (`attach_custom_mcp`). Per MCP you choose **shared** auth (one org credential,
+  `userType: app`) or **per-user** auth (each colleague signs in as themselves,
+  `userType: user` — the default). OAuth MCPs attach cleanly; you're prompted before
+  any local secret is read to vault a static-auth MCP.
+- **Skills** — curated from your project (`.claude/skills/`) and your user scope
+  (`~/.claude/skills/`); the chosen set ships in the upload.
+- **AI suggestions** — the skill reads your `CLAUDE.md` and pre-selects a recommended
+  MCP/skill set you can accept or edit.
+- **Manifest & redeploy** — choices are written to a committed `.runbear/deploy.json`.
+  Re-running `deploy` reproduces the exact configuration with no re-prompting;
+  `--add-mcp` / `--remove-mcp` / `--add-skill` / `--remove-skill` adjust it.
+
+> **Limitations:** local `stdio` MCPs (npx/uvx/command servers) can only reach the
+> hosted agent through a Runbear catalog equivalent — with no match they're reported
+> as un-deployable. Vaulting a static-auth custom MCP requires reading its secret into
+> context, which only happens after you confirm a per-MCP prompt.
 
 ### Prerequisites
 
 - The **Runbear management MCP server** must be connected in your Claude Code session —
-  it provides the `create_project_upload` and `finalize_project_upload` tools (plus
+  it provides `create_project_upload`, `finalize_project_upload`, `search_apps`,
+  `attach_app`, `attach_custom_mcp`, `list_agent_tools`, and `detach_tool` (plus
   `create_agent` for the `--new` flow).
+- The **`claude` CLI** on PATH — used to enumerate local MCPs (`claude mcp list` /
+  `claude mcp get`).
 - The target **Runbear Agent SDK app URL, app UUID, or agent name** (the first
   argument) — a name is fuzzy-matched, with an interactive picker when more than one
   agent matches — or `--new "<agentName>"` to create a fresh Claude Agent SDK agent and
@@ -164,9 +190,18 @@ Or create a new Claude Agent SDK agent and deploy to it in one step:
 /runbear:deploy --new "My Agent" --cwd ./my-project
 ```
 
+Redeploy with the saved settings (no re-prompting), optionally editing the set:
+
+```
+/runbear:deploy "My Agent"
+/runbear:deploy "My Agent" --add-mcp linear --remove-skill .claude/skills/old
+```
+
 The backend caps a deploy at **500 files** / **25 MiB decompressed** / **50 MiB zip**,
-and blocks secrets, `.env`, `.git/`, `node_modules/`, `.mcp.json`, and Claude settings
-files. Use `--overwrite` to replace files that already exist in the agent workspace.
+and blocks secrets, `.env`, `.git/`, `.runbear/`, `node_modules/`, `.mcp.json`, and
+Claude settings files. Use `--overwrite` to replace files that already exist in the
+agent workspace. `.runbear/deploy.json` (the deploy manifest) is committed to your repo
+but excluded from the upload.
 
 Connect an agent to Slack (a workspace-specific custom bot by default):
 

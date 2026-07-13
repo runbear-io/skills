@@ -136,6 +136,9 @@ next:      mention the agent in Slack to start chatting
 
 ## Notes
 
+- This is the **reachability** step after `runbear:deploy`. `deploy` uploads the
+  project and configures the agent's MCPs and skills; `connect-slack` is how your
+  colleagues actually reach it. A successful first deploy points here.
 - The shared Runbear Slack app auto-joins a channel the first time the agent is mentioned
   or a notification fires there, so an explicit channel join is often optional.
 - Never ask the user to paste Slack tokens, app credentials, or MCP URLs into the chat —
