@@ -1,7 +1,7 @@
 ---
-description: Deploy a local Claude Code project to a Runbear Claude Agent SDK agent AND configure the MCPs and skills it needs, so colleagues can use your agent without you doing it on their behalf. Files are uploaded through the Runbear signed-URL flow (`create_project_upload` + `finalize_project_upload`); MCPs are attached with a per-integration choice of shared vs per-user auth; skills are curated from your project and user scope; and the whole configuration is saved to a committed `.runbear/deploy.json` manifest for one-command redeploys. Use when the user wants to deploy, publish, push, sync, share, or redeploy a local project (its files, CLAUDE.md, skills, MCPs, and code) to a hosted Runbear Agent SDK agent identified by an app UUID, agent URL, or agent name (fuzzy-matched) — or, with `--new <agentName>`, to create a brand-new Claude Agent SDK agent and deploy to it in one step.
+description: Deploy a local Claude Code project to a Runbear Claude Agent SDK agent AND configure the MCPs and skills it needs, so colleagues can use your agent without you doing it on their behalf. Files are uploaded through the Runbear signed-URL flow (`create_project_upload` + `finalize_project_upload`); MCPs are attached with a per-integration choice of shared vs per-user auth; skills are curated from your project and user scope; and the whole configuration is saved to a committed `.runbear/deploy.json` manifest for one-command redeploys. After deploying, if the agent has no Slack channel yet, it offers to connect Slack (via `runbear:connect-slack`) so colleagues can reach it. Use when the user wants to deploy, publish, push, sync, share, or redeploy a local project (its files, CLAUDE.md, skills, MCPs, and code) to a hosted Runbear Agent SDK agent identified by an app UUID, agent URL, or agent name (fuzzy-matched) — or, with `--new <agentName>`, to create a brand-new Claude Agent SDK agent and deploy to it in one step.
 argument-hint: "<appId-or-url-or-name> | --new <agentName> [--cwd <project-path>] [--overwrite] [--add-mcp <name>] [--remove-mcp <name>] [--add-skill <path>] [--remove-skill <path>]"
-allowed-tools: Bash, Read, Write, AskUserQuestion, mcp__*__list_agents, mcp__*__get_agent, mcp__*__create_agent, mcp__*__create_project_upload, mcp__*__finalize_project_upload, mcp__*__search_apps, mcp__*__attach_app, mcp__*__attach_custom_mcp, mcp__*__list_agent_tools, mcp__*__detach_tool
+allowed-tools: Bash, Read, Write, AskUserQuestion, Skill, mcp__*__list_agents, mcp__*__get_agent, mcp__*__create_agent, mcp__*__create_project_upload, mcp__*__finalize_project_upload, mcp__*__search_apps, mcp__*__attach_app, mcp__*__attach_custom_mcp, mcp__*__list_agent_tools, mcp__*__detach_tool, mcp__*__list_slack_installations
 ---
 
 # Deploy Local Project to Runbear
@@ -27,6 +27,9 @@ Every choice is written to a committed **`.runbear/deploy.json`** manifest, so a
 later `deploy` reproduces the exact same agent, or adjusts it with `--add-*` /
 `--remove-*` flags.
 
+After a successful deploy, if the agent isn't connected to Slack yet, the skill
+offers to run `runbear:connect-slack` so your team can actually reach it.
+
 Unlike `skill-uploader:upload` (a single `SKILL.md`), this deploys the **whole
 project** and configures the agent end to end.
 
@@ -35,8 +38,9 @@ project** and configures the agent end to end.
 - The **Runbear management MCP server must be connected** in this Claude Code
   session — it exposes `create_project_upload`, `finalize_project_upload`,
   `search_apps`, `attach_app`, `attach_custom_mcp`, `list_agent_tools`,
-  `detach_tool`, `list_agents`, and `get_agent`. If those tools are unavailable,
-  tell the user to connect the Runbear MCP first and stop.
+  `detach_tool`, `list_slack_installations`, `list_agents`, and `get_agent`. If
+  those tools are unavailable, tell the user to connect the Runbear MCP first and
+  stop.
 - The target **Runbear Agent SDK app UUID, agent URL, or agent name** (first
   positional argument), or `--new "<agentName>"`. A name is fuzzy-matched via
   `list_agents`. The target agent must be of type **Claude Agent SDK** (the
@@ -356,7 +360,35 @@ user fix them (remove the file, or rerun with `--overwrite` for
 2. **Write `<projectPath>/.runbear/deploy.json`** — only on a successful
    finalize. Include `version: 1`, `agentId`, `agentName`, the recorded `mcps`
    (no secrets), the selected `skills`, and `lastDeployedAt`.
-3. **Report** (see Success response) and print the Slack handoff pointer.
+3. **Offer to connect Slack** (Step 11).
+4. **Report** (see Success response).
+
+### Step 11 — Offer to connect Slack
+
+A deployed agent isn't reachable by your colleagues until it's connected to a
+channel. After a successful finalize, check whether the agent is already on
+Slack and offer to fix it if not.
+
+1. **Check existing installations** — call `list_slack_installations` for
+   `agentId`.
+   - **One or more installations** ⇒ the agent is already connected. Don't
+     prompt; just show its Slack status in the report (`slack: connected —
+     <workspace / bot name>`).
+   - **None** (empty list, or a "no installations" result) ⇒ the agent has no
+     Slack channel yet.
+2. **Ask, only when not connected and this is an interactive deploy** (first
+   deploy, or a redeploy invoked with edit flags): use `AskUserQuestion` —
+   *"This agent isn't connected to Slack yet, so your team can't reach it.
+   Connect it to Slack now?"* with options **Connect now** and **Not now**.
+   - **Connect now** ⇒ hand off to the `runbear:connect-slack` skill for this
+     agent (invoke it as `runbear:connect-slack "<agentName>"`). Do not
+     reimplement the Slack flow here — that skill owns the custom-bot setup link
+     and channel-joining.
+   - **Not now** ⇒ skip; the report's `next:` pointer tells them how to do it
+     later.
+3. **Silent redeploy** (manifest present, no edit flags): never prompt. Still run
+   the installations check and include the Slack status line in the report, with
+   the `connect-slack` pointer when it isn't connected.
 
 ## Redeploy (manifest present)
 
@@ -393,7 +425,10 @@ files:   <fileCount> written  (<K> filtered out locally)
 mcps:    <name (shared|per-user)>, ...
          un-deployable: <name — reason + web-UI link>   (if any)
 skills:  <deployed skill slugs>
-next:    /runbear:connect-slack "<agentName>"   — connect it to Slack for your team
+slack:   connected — <workspace / bot>   |   not connected
+next:    <only when Slack isn't connected and the user declined / it was a
+         silent redeploy>  /runbear:connect-slack "<agentName>"   — connect it
+         to Slack for your team
 ```
 
 ## Blocked response
