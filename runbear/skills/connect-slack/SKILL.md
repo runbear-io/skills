@@ -1,7 +1,7 @@
 ---
 description: Connect a Runbear Claude Agent SDK agent to Slack through the Runbear management MCP (`deploy_to_slack`). Defaults to a workspace-specific custom Slack bot (`mode: custom`) — the agent gets its own bot identity instead of the shared @Runbear bot — and can join public channels afterward. Use when the user wants to connect, deploy, install, or publish a Runbear agent to Slack as its own bot, optionally joining channels. The target agent is given by app UUID, agent URL, or agent name (fuzzy-matched).
 argument-hint: "<appId-or-url-or-name> [--mode custom|default] [--bot-name <name>] [--channel <name> ...]"
-allowed-tools: mcp__*__list_agents, mcp__*__get_agent, mcp__*__deploy_to_slack, mcp__*__get_slack_install_link, mcp__*__list_slack_installations, mcp__*__list_slack_channels, mcp__*__join_slack_channels
+allowed-tools: AskUserQuestion, Bash, mcp__*__list_agents, mcp__*__get_agent, mcp__*__deploy_to_slack, mcp__*__get_slack_install_link, mcp__*__list_slack_installations, mcp__*__list_slack_channels, mcp__*__join_slack_channels
 ---
 
 # Connect a Runbear Agent to Slack
@@ -69,8 +69,9 @@ name before continuing. Do not silently transliterate.
      - **No matches** → retry once with a shorter/normalized query; if still nothing, tell
        the user no agent matched and stop. Do not guess a UUID.
      - **One match** → use its `id`; confirm the name and app ID.
-     - **More than one match** → do **not** guess. Present an interactive selection listing
-       each candidate's **name**, **app ID**, and a disambiguator (created date,
+     - **More than one match** → do **not** guess. Present an interactive selection with
+       `AskUserQuestion` (the interactive UI, never a plain-text list), one option per
+       candidate showing its **name**, **app ID**, and a disambiguator (created date,
        `createdByMe`), and use the one the user picks.
    - Also capture the resolved agent's **name** (from the `list_agents` match, or via
      `get_agent` when the target was a UUID/URL) so it can default the bot name.
@@ -84,11 +85,12 @@ name before continuing. Do not silently transliterate.
      { "agentId": "<agentId>", "mode": "custom", "botName": "<botName>" }
      ```
 
-     It returns a **setup link** (a Runbear web-app URL). Show it to the user and tell them
-     to open it and finish creating the custom Slack app (authorize + install into their
-     workspace). This step cannot be completed from here. Stop and wait for them to
-     confirm it's done before joining any channels — the custom bot's installation doesn't
-     exist until they finish.
+     It returns a **setup link** (a Runbear web-app URL). **Open it automatically** for the
+     user (see **Opening links** below) and also print it so they have it as a fallback,
+     then tell them to finish creating the custom Slack app in the browser (authorize +
+     install into their workspace). This step cannot be completed from here. Stop and wait
+     for them to confirm it's done before joining any channels — the custom bot's
+     installation doesn't exist until they finish.
    - **default**:
 
      ```json
@@ -97,12 +99,14 @@ name before continuing. Do not silently transliterate.
 
      On `status: "connected"` the agent is on the shared Runbear app — report the workspace
      name and continue to channel-joining if requested. If it instead returns an install
-     link (the org hasn't installed the shared app yet), show the link and stop.
+     link (the org hasn't installed the shared app yet), **open it automatically** (see
+     **Opening links** below), print it as a fallback, and stop.
 5. **Join channels** (only if `channels` was given, and — for custom mode — only after the
    user confirms the setup link is complete):
    - Call `list_slack_installations` for the agent and pick the right installation
      (`isCustomBot: true` for a custom bot; for default mode use the connected shared
-     installation). If several match, ask which workspace.
+     installation). If several match, ask which workspace with `AskUserQuestion` (the
+     interactive UI, one option per workspace).
    - Resolve each requested channel name to a `channelId` with `list_slack_channels`
      (paginate with `nextCursor` if needed). If a name isn't found among public channels,
      say so and skip it — it may be misspelled or private.
@@ -118,7 +122,7 @@ name before continuing. Do not silently transliterate.
 🔗 Custom Slack app — finish setup
 agent:   <agentName>
 bot:     <botName>
-open:    <setup link>
+opened:  <setup link>   (opened in your browser — if it didn't launch, open this link)
 next:    complete the setup in the Runbear web app, then re-run with --channel <name>
          (or say the channels) to add the bot, or just @mention it in a channel.
 ```
@@ -133,6 +137,27 @@ mode:      <custom|default>
 channels:  <joined channels>   (skipped: <not-found or private>)
 next:      mention the agent in Slack to start chatting
 ```
+
+## Opening links
+
+When a step says to open a URL (the custom-mode setup link, or a shared-app install link),
+open it **for** the user with `Bash` instead of asking them to run `! open "<url>"`
+themselves:
+
+- Run the platform opener as a background, non-blocking command and don't fail the flow if
+  it errors (headless/remote sessions have no opener):
+  - macOS: `open "<url>"`
+  - Linux: `xdg-open "<url>"`
+  - Windows: `start "" "<url>"`
+- A portable one-liner that picks the right one:
+
+  ```bash
+  url="<url>"; (open "$url" || xdg-open "$url" || start "" "$url") >/dev/null 2>&1 &
+  ```
+
+- **Always also print the URL** in the response so the user has it if the browser didn't
+  launch (e.g. remote shell, no display). Auto-open is a convenience, not the source of
+  truth.
 
 ## Notes
 
