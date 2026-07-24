@@ -84,11 +84,119 @@ class PackageDatasetTest(unittest.TestCase):
                 with self.assertRaises(PermissionError):
                     package_dataset.inventory(source, output)
 
+    def test_rejects_aggregate_limit_before_writing_archives(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            output = root / "output"
+            source.mkdir()
+            output.mkdir()
+
+            with (
+                patch.object(
+                    package_dataset,
+                    "estimated_shard_bytes",
+                    return_value=package_dataset.MAX_TOTAL_BYTES + 1,
+                ),
+                patch.object(package_dataset, "create_shard") as create_shard,
+            ):
+                with self.assertRaisesRegex(ValueError, "archives exceed"):
+                    package_dataset.create_shards(source, output, [[]])
+
+            create_shard.assert_not_called()
+            self.assertEqual(list(output.iterdir()), [])
+
+    def test_removes_partial_archives_when_shard_creation_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            output = root / "output"
+            source.mkdir()
+            output.mkdir()
+
+            def failing_create_shard(_source, shard_output, index, _group):
+                path = shard_output / f"part-{index:05d}.tar"
+                path.write_bytes(b"partial")
+                if index == 1:
+                    raise RuntimeError("injected shard failure")
+                return {
+                    "index": index,
+                    "path": str(path),
+                    "sizeBytes": path.stat().st_size,
+                    "sha256": "0" * 64,
+                    "fileCount": 0,
+                }
+
+            with patch.object(
+                package_dataset,
+                "create_shard",
+                side_effect=failing_create_shard,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "injected shard failure"):
+                    package_dataset.create_shards(source, output, [[], []])
+
+            self.assertEqual(list(output.iterdir()), [])
+
 
 class UploadShardTest(unittest.TestCase):
     def test_rejects_plaintext_upload_url(self) -> None:
         with self.assertRaisesRegex(ValueError, "must use HTTPS"):
             upload_shard.connection_for("http://storage.example/upload")
+
+    def test_validates_resumable_offsets_against_local_file_size(self) -> None:
+        class FakeResponse:
+            status = 308
+
+            def __init__(self, uploaded_range: str) -> None:
+                self.uploaded_range = uploaded_range
+
+            def read(self) -> bytes:
+                return b""
+
+            def getheader(self, name: str) -> str | None:
+                return self.uploaded_range if name == "Range" else None
+
+        class FakeConnection:
+            def __init__(self, uploaded_range: str) -> None:
+                self.response = FakeResponse(uploaded_range)
+
+            def request(self, *_args, **_kwargs) -> None:
+                return None
+
+            def getresponse(self) -> FakeResponse:
+                return self.response
+
+            def close(self) -> None:
+                return None
+
+        for uploaded_range, expected in [
+            ("bytes=0-49", 50),
+            ("bytes=0-99", 100),
+        ]:
+            with self.subTest(uploaded_range=uploaded_range):
+                with patch.object(
+                    upload_shard,
+                    "connection_for",
+                    return_value=(FakeConnection(uploaded_range), "/upload"),
+                ):
+                    self.assertEqual(
+                        upload_shard.completed_offset(
+                            "https://storage.example/upload",
+                            100,
+                        ),
+                        expected,
+                    )
+
+        with patch.object(
+            upload_shard,
+            "connection_for",
+            return_value=(FakeConnection("bytes=0-100"), "/upload"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "exceeds local file size"):
+                upload_shard.completed_offset(
+                    "https://storage.example/upload",
+                    100,
+                )
 
 
 if __name__ == "__main__":

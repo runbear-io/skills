@@ -122,6 +122,18 @@ def group_files(
     return groups
 
 
+def estimated_shard_bytes(
+    files: list[tuple[Path, str, os.stat_result]],
+) -> int:
+    unpadded = 1024 + sum(
+        estimated_tar_bytes(relative_path, file_stat.st_size)
+        for _path, relative_path, file_stat in files
+    )
+    return (
+        (unpadded + tarfile.RECORDSIZE - 1) // tarfile.RECORDSIZE
+    ) * tarfile.RECORDSIZE
+
+
 def open_verified_file(
     source_root: Path,
     relative_path: str,
@@ -190,6 +202,30 @@ def create_shard(
     }
 
 
+def create_shards(
+    source: Path,
+    output: Path,
+    groups: list[list[tuple[Path, str, os.stat_result]]],
+) -> tuple[list[dict[str, object]], int]:
+    estimated_total = sum(estimated_shard_bytes(group) for group in groups)
+    if estimated_total > MAX_TOTAL_BYTES:
+        raise ValueError(f"dataset archives exceed {MAX_TOTAL_BYTES} bytes")
+
+    try:
+        shards = [
+            create_shard(source, output, index, group)
+            for index, group in enumerate(groups)
+        ]
+        total_bytes = sum(int(shard["sizeBytes"]) for shard in shards)
+        if total_bytes > MAX_TOTAL_BYTES:
+            raise ValueError(f"dataset archives exceed {MAX_TOTAL_BYTES} bytes")
+        return shards, total_bytes
+    except Exception:
+        for shard_path in output.glob("part-*.tar"):
+            shard_path.unlink(missing_ok=True)
+        raise
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", required=True)
@@ -209,13 +245,7 @@ def main() -> None:
 
     files = inventory(source, output)
     groups = group_files(files)
-    shards = [
-        create_shard(source, output, index, group)
-        for index, group in enumerate(groups)
-    ]
-    total_bytes = sum(int(shard["sizeBytes"]) for shard in shards)
-    if total_bytes > MAX_TOTAL_BYTES:
-        raise ValueError(f"dataset archives exceed {MAX_TOTAL_BYTES} bytes")
+    shards, total_bytes = create_shards(source, output, groups)
     manifest = {
         "datasetName": args.dataset_name,
         "source": str(source),

@@ -43,7 +43,12 @@ def completed_offset(url: str, total_bytes: int) -> int:
         prefix = "bytes=0-"
         if not uploaded_range.startswith(prefix):
             raise RuntimeError(f"unexpected upload Range header: {uploaded_range}")
-        return int(uploaded_range[len(prefix) :]) + 1
+        offset = int(uploaded_range[len(prefix) :]) + 1
+        if offset > total_bytes:
+            raise RuntimeError(
+                f"upload Range exceeds local file size: {uploaded_range}"
+            )
+        return offset
     finally:
         connection.close()
 
