@@ -4,19 +4,23 @@ import hashlib
 import json
 import os
 import re
+import stat as stat_module
 import tarfile
 from pathlib import Path
 
+MAX_SHARDS = 64
 MAX_SHARD_BYTES = 512 * 1024 * 1024
 TARGET_SHARD_BYTES = 500 * 1024 * 1024
 MAX_TOTAL_BYTES = 20 * 1024 * 1024 * 1024
 MAX_FILES = 200_000
 DATASET_NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
-FORBIDDEN_EXACT = {
+FORBIDDEN_BASENAMES = {
     ".claude.json",
     ".mcp.json",
-    ".claude/settings.json",
-    ".claude/settings.local.json",
+}
+FORBIDDEN_CLAUDE_SETTINGS = {
+    "settings.json",
+    "settings.local.json",
 }
 
 
@@ -41,15 +45,32 @@ def sha256(path: Path) -> str:
 def validate_relative_path(relative_path: str) -> None:
     parts = relative_path.split("/")
     basename = parts[-1]
-    if relative_path in FORBIDDEN_EXACT or basename == ".env" or basename.startswith(".env."):
+    if (
+        basename in FORBIDDEN_BASENAMES
+        or basename == ".env"
+        or basename.startswith(".env.")
+        or (
+            len(parts) >= 2
+            and parts[-2] == ".claude"
+            and basename in FORBIDDEN_CLAUDE_SETTINGS
+        )
+    ):
         raise ValueError(f"forbidden configuration or environment file: {relative_path}")
     if any(part in {"", ".", ".."} for part in parts):
         raise ValueError(f"invalid relative path: {relative_path}")
 
 
-def inventory(source: Path, output: Path) -> list[tuple[Path, str, int]]:
-    files: list[tuple[Path, str, int]] = []
-    for root, directories, names in os.walk(source, followlinks=False):
+def raise_walk_error(error: OSError) -> None:
+    raise error
+
+
+def inventory(source: Path, output: Path) -> list[tuple[Path, str, os.stat_result]]:
+    files: list[tuple[Path, str, os.stat_result]] = []
+    for root, directories, names in os.walk(
+        source,
+        followlinks=False,
+        onerror=raise_walk_error,
+    ):
         root_path = Path(root)
         kept_directories: list[str] = []
         for directory in sorted(directories):
@@ -62,13 +83,14 @@ def inventory(source: Path, output: Path) -> list[tuple[Path, str, int]]:
         directories[:] = kept_directories
         for name in sorted(names):
             path = root_path / name
-            if path.is_symlink():
+            file_stat = os.stat(path, follow_symlinks=False)
+            if stat_module.S_ISLNK(file_stat.st_mode):
                 raise ValueError(f"symbolic links are not supported: {path}")
-            if not path.is_file():
+            if not stat_module.S_ISREG(file_stat.st_mode):
                 raise ValueError(f"special filesystem entry is not supported: {path}")
             relative_path = path.relative_to(source).as_posix()
             validate_relative_path(relative_path)
-            files.append((path, relative_path, path.stat().st_size))
+            files.append((path, relative_path, file_stat))
             if len(files) > MAX_FILES:
                 raise ValueError(f"dataset exceeds {MAX_FILES} files")
     files.sort(key=lambda item: item[1])
@@ -78,13 +100,13 @@ def inventory(source: Path, output: Path) -> list[tuple[Path, str, int]]:
 
 
 def group_files(
-    files: list[tuple[Path, str, int]],
-) -> list[list[tuple[Path, str, int]]]:
-    groups: list[list[tuple[Path, str, int]]] = []
-    current: list[tuple[Path, str, int]] = []
+    files: list[tuple[Path, str, os.stat_result]],
+) -> list[list[tuple[Path, str, os.stat_result]]]:
+    groups: list[list[tuple[Path, str, os.stat_result]]] = []
+    current: list[tuple[Path, str, os.stat_result]] = []
     current_bytes = 1024
     for item in files:
-        entry_bytes = estimated_tar_bytes(item[1], item[2])
+        entry_bytes = estimated_tar_bytes(item[1], item[2].st_size)
         if entry_bytes + 1024 > MAX_SHARD_BYTES:
             raise ValueError(f"file cannot fit in a shard: {item[1]}")
         if current and current_bytes + entry_bytes > TARGET_SHARD_BYTES:
@@ -95,27 +117,65 @@ def group_files(
         current_bytes += entry_bytes
     if current:
         groups.append(current)
+    if len(groups) > MAX_SHARDS:
+        raise ValueError(f"dataset exceeds {MAX_SHARDS} shards")
     return groups
 
 
+def open_verified_file(
+    source_root: Path,
+    relative_path: str,
+    expected: os.stat_result,
+) -> int:
+    parts = relative_path.split("/")
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    file_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
+    directory_fds = [os.open(source_root, directory_flags)]
+    file_fd: int | None = None
+    try:
+        for part in parts[:-1]:
+            directory_fds.append(
+                os.open(part, directory_flags, dir_fd=directory_fds[-1])
+            )
+        file_fd = os.open(parts[-1], file_flags, dir_fd=directory_fds[-1])
+        actual = os.fstat(file_fd)
+        if (
+            not stat_module.S_ISREG(actual.st_mode)
+            or actual.st_dev != expected.st_dev
+            or actual.st_ino != expected.st_ino
+            or actual.st_size != expected.st_size
+        ):
+            raise ValueError(f"source file changed during packaging: {relative_path}")
+        return file_fd
+    except Exception:
+        if file_fd is not None:
+            os.close(file_fd)
+        raise
+    finally:
+        for directory_fd in reversed(directory_fds):
+            os.close(directory_fd)
+
+
 def create_shard(
+    source_root: Path,
     output: Path,
     index: int,
-    files: list[tuple[Path, str, int]],
+    files: list[tuple[Path, str, os.stat_result]],
 ) -> dict[str, object]:
     path = output / f"part-{index:05d}.tar"
     with tarfile.open(path, mode="w", format=tarfile.GNU_FORMAT) as archive:
-        for source_path, relative_path, _size in files:
-            info = archive.gettarinfo(str(source_path), arcname=relative_path)
-            if not info.isreg():
-                raise ValueError(f"non-regular entry encountered: {relative_path}")
+        for _source_path, relative_path, expected in files:
+            info = tarfile.TarInfo(name=relative_path)
+            info.size = expected.st_size
             info.uid = 0
             info.gid = 0
             info.uname = ""
             info.gname = ""
             info.mtime = 0
             info.mode = 0o640
-            with source_path.open("rb") as source:
+            info.type = tarfile.REGTYPE
+            file_fd = open_verified_file(source_root, relative_path, expected)
+            with os.fdopen(file_fd, "rb") as source:
                 archive.addfile(info, source)
     size = path.stat().st_size
     if size > MAX_SHARD_BYTES:
@@ -149,7 +209,10 @@ def main() -> None:
 
     files = inventory(source, output)
     groups = group_files(files)
-    shards = [create_shard(output, index, group) for index, group in enumerate(groups)]
+    shards = [
+        create_shard(source, output, index, group)
+        for index, group in enumerate(groups)
+    ]
     total_bytes = sum(int(shard["sizeBytes"]) for shard in shards)
     if total_bytes > MAX_TOTAL_BYTES:
         raise ValueError(f"dataset archives exceed {MAX_TOTAL_BYTES} bytes")

@@ -8,14 +8,11 @@ from urllib.parse import urlsplit
 CHUNK_BYTES = 8 * 1024 * 1024
 
 
-def connection_for(url: str) -> tuple[http.client.HTTPConnection, str]:
+def connection_for(url: str) -> tuple[http.client.HTTPSConnection, str]:
     parsed = urlsplit(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise ValueError("upload URL must be HTTP or HTTPS")
-    connection_type = (
-        http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
-    )
-    connection = connection_type(parsed.hostname, parsed.port, timeout=120)
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise ValueError("upload URL must use HTTPS")
+    connection = http.client.HTTPSConnection(parsed.hostname, parsed.port, timeout=120)
     path = parsed.path or "/"
     if parsed.query:
         path = f"{path}?{parsed.query}"
