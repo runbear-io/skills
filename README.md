@@ -133,6 +133,7 @@ subagents, docs, and code you have locally, with the directory layout preserved.
 |-------|-------------|
 | `deploy` | Deploy a local project's files, select which local MCPs the agent gets (shared vs per-user auth per MCP), and curate its skills — all saved to a committed manifest for one-command redeploys |
 | `connect-slack` | Connect a Runbear Agent SDK agent to Slack — creates a workspace-specific custom bot by default, and can join channels |
+| `dataset-upload` | Package and upload large multi-file datasets through resumable GCS sessions, then publish them read-only to a hosted agent |
 
 ### What `deploy` configures
 
@@ -155,6 +156,21 @@ subagents, docs, and code you have locally, with the directory layout preserved.
 > hosted agent through a Runbear catalog equivalent — with no match they're reported
 > as un-deployable. Vaulting a static-auth custom MCP requires reading its secret into
 > context, which only happens after you confirm a per-MCP prompt.
+
+### Upload a large dataset
+
+Use `dataset-upload` when document collections exceed the project deploy limits.
+The skill packages files into deterministic tar shards, uploads them directly through
+resumable GCS sessions, and waits for the agent-worker to publish them on Filestore.
+
+```txt
+/runbear:dataset-upload ./diligence \
+  --agent https://app.runbear.io/agents/<appId> \
+  --dataset-name investor-diligence
+```
+
+Published datasets are currently available only to agents using the `local-asrt`
+Filestore workspace mode.
 
 ### Prerequisites
 
