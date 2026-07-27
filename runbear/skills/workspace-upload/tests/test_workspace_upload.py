@@ -688,6 +688,46 @@ class PackageUploadTest(unittest.TestCase):
             self.assertEqual(list(output.glob("part-*.tar*")), [])
             self.assertFalse((output / "manifest.json").exists())
 
+    def test_binary_zstd_stops_before_materializing_over_limit_tar(self) -> None:
+        binary = packager.shutil.which("zstd")
+        if binary is None:
+            self.skipTest("no zstd binary is available")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            output = root / "output"
+            source.mkdir()
+            output.mkdir()
+            # 1 MiB of payload against an 8 KiB cap: if the bound were checked
+            # only after write_tar_stream finished, `measured` would be about
+            # 1 MiB and the assertion below could not pass.
+            (source / "compressible.txt").write_bytes(b"x" * 1024 * 1024)
+            source_root, entries = packager.inventory(source, output)
+            _prefix, archive_entries = packager.choose_layout(
+                entries,
+                "Compressible",
+                FIXED_TIMESTAMP,
+            )
+            limit = 8 * 1024
+
+            with (
+                patch.object(packager, "MAX_SHARD_UNCOMPRESSED_BYTES", limit),
+                self.assertRaises(packager.UncompressedShardTooLarge) as caught,
+            ):
+                packager.create_shard(
+                    source_root,
+                    output,
+                    0,
+                    archive_entries,
+                    packager.CompressionChoice("zstd", f"binary:{binary}"),
+                )
+
+            # tarfile copies in chunks of at most 16 KiB, so a streaming bound
+            # can overshoot by at most one chunk before it trips.
+            self.assertLessEqual(caught.exception.measured, limit + 16 * 1024)
+            self.assertEqual(caught.exception.allowed, limit)
+            self.assertEqual(list(output.glob("*")), [])
+
     def test_produced_shards_never_exceed_compressed_limit(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

@@ -98,6 +98,35 @@ class SizeLimitedWriter:
         return self.size
 
 
+class UncompressedLimitedWriter:
+    """
+    Bounds the uncompressed tar stream as it is written, so an over-limit
+    source is refused mid-stream instead of after the whole archive has already
+    been materialized on local disk.
+    """
+
+    def __init__(self, output: BinaryIO, limit: int) -> None:
+        self.output = output
+        self.limit = limit
+        self.size = 0
+
+    def write(self, data: bytes) -> int:
+        next_size = self.size + len(data)
+        if next_size > self.limit:
+            raise UncompressedShardTooLarge(next_size, self.limit)
+        written = self.output.write(data)
+        if written != len(data):
+            raise OSError("short write while creating shard")
+        self.size = next_size
+        return written
+
+    def flush(self) -> None:
+        self.output.flush()
+
+    def tell(self) -> int:
+        return self.size
+
+
 class CountingWriter:
     def __init__(self, output: object) -> None:
         self.output = output
@@ -494,7 +523,10 @@ def write_binary_zstd_archive(
         with temporary_tar.open("wb") as uncompressed_output:
             uncompressed_bytes = write_tar_stream(
                 source_root,
-                uncompressed_output,
+                UncompressedLimitedWriter(
+                    uncompressed_output,
+                    MAX_SHARD_UNCOMPRESSED_BYTES,
+                ),
                 entries,
             )
         with temporary_tar.open("rb") as uncompressed_input, path.open("wb") as output:
