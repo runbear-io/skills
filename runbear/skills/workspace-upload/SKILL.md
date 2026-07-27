@@ -82,7 +82,6 @@ Call `create_workspace_upload` with:
 
 - `agentId`: the resolved target.
 - `compression`: the manifest's `compression` value.
-- `totalUncompressedBytes`: the manifest's `totalUncompressedBytes` value.
 - `shards`: only `index`, `sizeBytes`, `uncompressedBytes`, `sha256`, and `fileCount` from each manifest shard.
 
 `sizeBytes` is the compressed transit size. `uncompressedBytes` is the exact tar expansion that the worker verifies during extraction. The worker rejects a shard whose actual expansion exceeds its declaration, so never estimate, round, or recalculate this value.
@@ -103,7 +102,7 @@ The helper queries the session offset and sends only the remaining compressed by
 
 ### 4. Finalize extraction
 
-After every upload command succeeds, call `finalize_workspace_upload` with the same `agentId`, `uploadId`, `compression`, manifest `totalUncompressedBytes`, ordered shard metadata (`index`, `sizeBytes`, `uncompressedBytes`, `sha256`, and `fileCount`), and `overwrite` value. Copy both uncompressed values from the manifest without modification.
+After every upload command succeeds, call `finalize_workspace_upload` with the same `agentId`, `uploadId`, `compression`, ordered shard metadata (`index`, `sizeBytes`, `uncompressedBytes`, `sha256`, and `fileCount`), and `overwrite` value. Copy each shard's `uncompressedBytes` from the manifest without modification; the server sums them itself.
 
 Record the returned `jobId`. Finalization only enqueues extraction; it does not mean the files are ready.
 
