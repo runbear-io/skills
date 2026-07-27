@@ -2,6 +2,7 @@
 import argparse
 import http.client
 import os
+import re
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -40,10 +41,10 @@ def completed_offset(url: str, total_bytes: int) -> int:
         uploaded_range = response.getheader("Range")
         if uploaded_range is None:
             return 0
-        prefix = "bytes=0-"
-        if not uploaded_range.startswith(prefix):
+        match = re.fullmatch(r"bytes=0-(0|[1-9][0-9]*)", uploaded_range)
+        if match is None:
             raise RuntimeError(f"unexpected upload Range header: {uploaded_range}")
-        offset = int(uploaded_range[len(prefix) :]) + 1
+        offset = int(match.group(1)) + 1
         if offset > total_bytes:
             raise RuntimeError(
                 f"upload Range exceeds local file size: {uploaded_range}"

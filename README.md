@@ -133,7 +133,7 @@ subagents, docs, and code you have locally, with the directory layout preserved.
 |-------|-------------|
 | `deploy` | Deploy a local project's files, select which local MCPs the agent gets (shared vs per-user auth per MCP), and curate its skills — all saved to a committed manifest for one-command redeploys |
 | `connect-slack` | Connect a Runbear Agent SDK agent to Slack — creates a workspace-specific custom bot by default, and can join channels |
-| `dataset-upload` | Package and upload large multi-file datasets through resumable GCS sessions, then publish them read-only to a hosted agent |
+| `workspace-upload` | Package and transfer large file collections through resumable GCS sessions into a hosted agent's writable workspace |
 
 ### What `deploy` configures
 
@@ -157,20 +157,28 @@ subagents, docs, and code you have locally, with the directory layout preserved.
 > as un-deployable. Vaulting a static-auth custom MCP requires reading its secret into
 > context, which only happens after you confirm a per-MCP prompt.
 
-### Upload a large dataset
+### Upload large workspace files
 
-Use `dataset-upload` when document collections exceed the project deploy limits.
-The skill packages files into deterministic tar shards, uploads them directly through
-resumable GCS sessions, and waits for the agent-worker to publish them on Filestore.
+Use `workspace-upload` when local files exceed the project deploy limits. The skill
+creates deterministic compressed tar shards, uploads them through resumable GCS
+sessions, and waits until extraction finishes in the agent's writable workspace.
 
 ```txt
-/runbear:dataset-upload ./diligence \
+/runbear:workspace-upload ./diligence \
   --agent https://app.runbear.io/agents/<appId> \
-  --dataset-name investor-diligence
+  --name "Investor_Diligence"
 ```
 
-Published datasets are currently available only to agents using the `local-asrt`
-Filestore workspace mode.
+`--name` is an optional workspace directory name. When supplied, the skill preserves
+it verbatim and places every uploaded entry below it. Without `--name`, one top-level
+source entry keeps its own name; multiple entries are placed below a generated
+`upload-YYYYMMDD-HHMMSS/` directory.
+
+Compression defaults to `auto`: Python's built-in zstd support is preferred, followed
+by the `zstandard` package and a `zstd` binary. If none is available, the skill uses
+gzip. Pass `--compression zstd`, `gzip`, or `none` to select a codec explicitly.
+After completion, the files are ordinary workspace files that the agent can modify
+or delete.
 
 ### Prerequisites
 
