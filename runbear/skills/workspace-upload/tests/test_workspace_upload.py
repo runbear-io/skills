@@ -193,6 +193,8 @@ class PackageUploadTest(unittest.TestCase):
             compressed_bytes = path.read_bytes()
 
             self.assertEqual(shard["sizeBytes"], len(compressed_bytes))
+            uncompressed_bytes = unpack_tar_bytes(path, "gzip")
+            self.assertEqual(shard["uncompressedBytes"], len(uncompressed_bytes))
             self.assertEqual(
                 shard["sha256"],
                 hashlib.sha256(compressed_bytes).hexdigest(),
@@ -200,7 +202,7 @@ class PackageUploadTest(unittest.TestCase):
             self.assertEqual(manifest["totalBytes"], len(compressed_bytes))
             self.assertEqual(
                 manifest["totalUncompressedBytes"],
-                len(unpack_tar_bytes(path, "gzip")),
+                shard["uncompressedBytes"],
             )
 
     def test_repackaging_is_deterministic_despite_source_metadata(self) -> None:
@@ -353,24 +355,25 @@ class PackageUploadTest(unittest.TestCase):
                 )
             )
 
-    def test_non_ascii_explicit_name_is_preserved(self) -> None:
+    def test_explicit_name_is_preserved_verbatim(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             source = root / "source"
             source.mkdir()
             (source / "report.txt").write_text("content")
+            layout_name = "研究 DATA_Set"
 
             manifest = packager.package_upload(
                 source,
                 root / "output",
-                "실사자료",
+                layout_name,
                 "none",
                 FIXED_TIMESTAMP,
             )
             names, _contents = read_archive(shard_path(manifest), "none")
 
-            self.assertEqual(manifest["topLevelPrefix"], "실사자료")
-            self.assertIn("실사자료/report.txt", names)
+            self.assertEqual(manifest["topLevelPrefix"], layout_name)
+            self.assertIn(f"{layout_name}/report.txt", names)
 
     def test_rejects_unsafe_explicit_names(self) -> None:
         unsafe_names = [
@@ -397,6 +400,59 @@ class PackageUploadTest(unittest.TestCase):
                             source,
                             root / "output",
                             unsafe_name,
+                            "none",
+                            FIXED_TIMESTAMP,
+                        )
+
+    def test_rejects_backslash_in_explicit_or_inferred_name(self) -> None:
+        cases = ["explicit", "inferred"]
+        for case in cases:
+            with self.subTest(case=case):
+                with tempfile.TemporaryDirectory() as temp:
+                    root = Path(temp)
+                    source = root / "source"
+                    source.mkdir()
+                    unsafe_name = r"safe\..\escape"
+                    requested_name: str | None
+                    if case == "explicit":
+                        (source / "report.txt").write_text("content")
+                        requested_name = unsafe_name
+                    else:
+                        inferred_entry = source / unsafe_name
+                        inferred_entry.mkdir()
+                        (inferred_entry / "report.txt").write_text("content")
+                        requested_name = None
+
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "layout name must not contain",
+                    ):
+                        packager.package_upload(
+                            source,
+                            root / "output",
+                            requested_name,
+                            "none",
+                            FIXED_TIMESTAMP,
+                        )
+
+    def test_rejects_normalized_reserved_layout_names(self) -> None:
+        reserved_names = [".CLAUDE", ".claude.", ".claude "]
+        for reserved_name in reserved_names:
+            with self.subTest(reserved_name=reserved_name):
+                with tempfile.TemporaryDirectory() as temp:
+                    root = Path(temp)
+                    source = root / "source"
+                    source.mkdir()
+                    (source / "report.txt").write_text("content")
+
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        f"reserved workspace root entry: {reserved_name}",
+                    ):
+                        packager.package_upload(
+                            source,
+                            root / "output",
+                            reserved_name,
                             "none",
                             FIXED_TIMESTAMP,
                         )
@@ -533,6 +589,80 @@ class PackageUploadTest(unittest.TestCase):
                     packager.resolve_compression("none"),
                 )
 
+    def test_rejects_uncompressed_shard_above_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            output = root / "output"
+            source.mkdir()
+            (source / "compressible.txt").write_bytes(b"x" * 16 * 1024)
+
+            with (
+                patch.object(
+                    packager,
+                    "MAX_SHARD_UNCOMPRESSED_BYTES",
+                    10 * 1024,
+                ),
+                patch.object(
+                    packager,
+                    "MAX_WORKSPACE_UPLOAD_EXTRACTED_BYTES",
+                    64 * 1024,
+                ),
+                self.assertRaisesRegex(
+                    ValueError,
+                    r"expands to \d+ bytes; "
+                    r"allowed per-shard maximum is 10240 bytes",
+                ),
+            ):
+                packager.package_upload(
+                    source,
+                    output,
+                    "Compressible",
+                    "gzip",
+                    FIXED_TIMESTAMP,
+                )
+
+            self.assertEqual(list(output.glob("part-*.tar*")), [])
+            self.assertFalse((output / "manifest.json").exists())
+
+    def test_rejects_uncompressed_total_above_limit_without_partial_shards(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            output = root / "output"
+            source.mkdir()
+            (source / "compressible.txt").write_bytes(b"x" * 16 * 1024)
+
+            with (
+                patch.object(
+                    packager,
+                    "MAX_WORKSPACE_UPLOAD_EXTRACTED_BYTES",
+                    10 * 1024,
+                ),
+                patch.object(
+                    packager,
+                    "MAX_SHARD_UNCOMPRESSED_BYTES",
+                    64 * 1024,
+                ),
+                self.assertRaisesRegex(
+                    ValueError,
+                    r"uncompressed upload is \d+ bytes; "
+                    r"allowed maximum is 10240 bytes",
+                ),
+            ):
+                packager.package_upload(
+                    source,
+                    output,
+                    "Compressible",
+                    "gzip",
+                    FIXED_TIMESTAMP,
+                )
+
+            self.assertEqual(list(output.glob("part-*.tar*")), [])
+            self.assertFalse((output / "manifest.json").exists())
+
     def test_produced_shards_never_exceed_compressed_limit(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -569,6 +699,20 @@ class PackageUploadTest(unittest.TestCase):
                     and shard["sizeBytes"] <= 10 * 1024
                     for shard in shards
                 )
+            )
+            extracted_sizes: list[int] = []
+            for shard in shards:
+                if not isinstance(shard, dict):
+                    self.fail("invalid manifest shard shape")
+                local_path = shard["path"]
+                if not isinstance(local_path, str):
+                    self.fail("invalid manifest shard path")
+                extracted_size = len(unpack_tar_bytes(Path(local_path), "gzip"))
+                extracted_sizes.append(extracted_size)
+                self.assertEqual(shard["uncompressedBytes"], extracted_size)
+            self.assertEqual(
+                manifest["totalUncompressedBytes"],
+                sum(extracted_sizes),
             )
 
 

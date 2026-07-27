@@ -43,7 +43,7 @@ The packaging helper writes final workspace-relative paths into every tar entry:
 - Without `--name`, a source with one top-level file or directory keeps that entry's name.
 - Without `--name`, a source with multiple top-level entries is placed below `upload-YYYYMMDD-HHMMSS/`.
 
-A supplied layout name must not be empty, `.`, or `..`; start with `-` or `.`; contain `/`, NUL, or control characters; or exceed 255 UTF-8 bytes. The transfer itself has no user-defined name. `create_workspace_upload` returns the `uploadId` used by the remaining calls.
+A supplied layout name must not be empty, `.`, or `..`; start with `-` or `.`; contain `/`, `\`, NUL, or control characters; normalize to a reserved workspace-root entry after case folding and removing trailing dots or spaces; or exceed 255 UTF-8 bytes. The transfer itself has no user-defined name. `create_workspace_upload` returns the `uploadId` used by the remaining calls.
 
 ## Workflow
 
@@ -65,14 +65,14 @@ Read `$OUTPUT_DIR/manifest.json`. It contains:
 
 - `topLevelPrefix`: the workspace's resulting top-level file or directory name.
 - `compression`: the codec selected by the helper.
-- `shards`: the ordered local shard list. Each item contains `index`, local `path`, compressed `sizeBytes`, compressed-byte `sha256`, and `fileCount`.
-- `totalBytes`: total compressed bytes.
-- `totalUncompressedBytes`: total tar bytes before outer compression.
+- `shards`: the ordered local shard list. Each item contains `index`, local `path`, compressed `sizeBytes`, exact tar expansion `uncompressedBytes`, compressed-byte `sha256`, and `fileCount`.
+- `totalBytes`: total compressed transit bytes.
+- `totalUncompressedBytes`: the sum of the shards' exact tar expansions before outer compression.
 - `totalFileCount`: total regular files.
 
 `auto` tries Python 3.14's `compression.zstd`, the third-party `zstandard` package, and a `zstd` binary, in that order. If none is available, it uses Python's gzip implementation. Explicit `zstd` fails when no zstd implementation is available. The helper prints the selected codec. Shard filenames end in `.tar.zst`, `.tar.gz`, or `.tar`.
 
-The complete transfer is capped at 64 shards, 20 GiB of compressed data, and 200,000 files. No manifest shard exceeds 512 MiB of compressed data.
+The complete transfer is capped at 64 shards, 20 GiB of compressed data, 40 GiB of uncompressed tar data, and 200,000 files. No manifest shard exceeds 512 MiB compressed or 40 GiB uncompressed. The helper measures the completed tar stream for each shard, so `uncompressedBytes` is exact rather than an estimate.
 
 Before uploading, report only the source path, top-level prefix, selected codec, shard count, compressed bytes, uncompressed tar bytes, and file count. Do not dump the full manifest when it is large.
 
@@ -82,7 +82,10 @@ Call `create_workspace_upload` with:
 
 - `agentId`: the resolved target.
 - `compression`: the manifest's `compression` value.
-- `shards`: only `index`, `sizeBytes`, `sha256`, and `fileCount` from each manifest shard.
+- `totalUncompressedBytes`: the manifest's `totalUncompressedBytes` value.
+- `shards`: only `index`, `sizeBytes`, `uncompressedBytes`, `sha256`, and `fileCount` from each manifest shard.
+
+`sizeBytes` is the compressed transit size. `uncompressedBytes` is the exact tar expansion that the worker verifies during extraction. The worker rejects a shard whose actual expansion exceeds its declaration, so never estimate, round, or recalculate this value.
 
 The response returns an `uploadId` and one upload URL per ordered shard. Confirm that every returned index has exactly one matching local manifest entry. Do not write the URLs into the manifest or another file.
 
@@ -100,7 +103,7 @@ The helper queries the session offset and sends only the remaining compressed by
 
 ### 4. Finalize extraction
 
-After every upload command succeeds, call `finalize_workspace_upload` with the same `agentId`, `uploadId`, `compression`, ordered shard metadata, and `overwrite` value.
+After every upload command succeeds, call `finalize_workspace_upload` with the same `agentId`, `uploadId`, `compression`, manifest `totalUncompressedBytes`, ordered shard metadata (`index`, `sizeBytes`, `uncompressedBytes`, `sha256`, and `fileCount`), and `overwrite` value. Copy both uncompressed values from the manifest without modification.
 
 Record the returned `jobId`. Finalization only enqueues extraction; it does not mean the files are ready.
 

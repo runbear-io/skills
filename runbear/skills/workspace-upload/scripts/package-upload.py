@@ -18,6 +18,8 @@ from typing import BinaryIO, NamedTuple
 MAX_SHARDS = 64
 MAX_SHARD_BYTES = 512 * 1024 * 1024
 MAX_TOTAL_BYTES = 20 * 1024 * 1024 * 1024
+MAX_WORKSPACE_UPLOAD_EXTRACTED_BYTES = 40 * 1024 * 1024 * 1024
+MAX_SHARD_UNCOMPRESSED_BYTES = MAX_WORKSPACE_UPLOAD_EXTRACTED_BYTES
 MAX_FILES = 200_000
 RESERVED_WORKSPACE_ROOT_ENTRIES = {
     ".claude",
@@ -59,6 +61,16 @@ class ArchiveEntry(NamedTuple):
 
 class ShardTooLarge(ValueError):
     pass
+
+
+class UncompressedShardTooLarge(ValueError):
+    def __init__(self, measured: int, allowed: int) -> None:
+        self.measured = measured
+        self.allowed = allowed
+        super().__init__(
+            f"uncompressed shard is {measured} bytes; "
+            f"allowed maximum is {allowed} bytes"
+        )
 
 
 class SizeLimitedWriter:
@@ -144,12 +156,13 @@ def current_timestamp() -> str:
 def validate_layout_name(name: str) -> None:
     if not name or name in {".", ".."}:
         raise ValueError("layout name must name one workspace directory")
-    if name in RESERVED_WORKSPACE_ROOT_ENTRIES:
+    normalized_name = name.rstrip(" .").casefold()
+    if normalized_name in RESERVED_WORKSPACE_ROOT_ENTRIES:
         raise ValueError(f"reserved workspace root entry: {name}")
     if name.startswith(("-", ".")):
         raise ValueError("layout name must not start with '-' or '.'")
-    if "/" in name:
-        raise ValueError("layout name must not contain '/'")
+    if "/" in name or "\\" in name:
+        raise ValueError("layout name must not contain '/' or '\\'")
     if any(unicodedata.category(character) == "Cc" for character in name):
         raise ValueError("layout name must not contain control characters")
     try:
@@ -524,11 +537,17 @@ def create_shard(
             raise ShardTooLarge(
                 f"compressed shard exceeds {MAX_SHARD_BYTES} bytes"
             )
+        if uncompressed_bytes > MAX_SHARD_UNCOMPRESSED_BYTES:
+            raise UncompressedShardTooLarge(
+                uncompressed_bytes,
+                MAX_SHARD_UNCOMPRESSED_BYTES,
+            )
         return (
             {
                 "index": index,
                 "path": str(path),
                 "sizeBytes": size,
+                "uncompressedBytes": uncompressed_bytes,
                 "sha256": sha256(path),
                 "fileCount": sum(not entry.is_directory for entry in entries),
             },
@@ -593,7 +612,7 @@ def create_shards(
                 group,
                 choice,
             )
-        except ShardTooLarge as error:
+        except (ShardTooLarge, UncompressedShardTooLarge) as error:
             split = split_entries(group)
             if split is None:
                 file_paths = [
@@ -602,6 +621,11 @@ def create_shards(
                     if not entry.is_directory
                 ]
                 name = file_paths[0] if file_paths else group[0].archive_path
+                if isinstance(error, UncompressedShardTooLarge):
+                    raise ValueError(
+                        f"entry {name} expands to {error.measured} bytes; "
+                        f"allowed per-shard maximum is {error.allowed} bytes"
+                    ) from error
                 raise ValueError(f"entry cannot fit in a compressed shard: {name}") from error
             create_group(split[0])
             create_group(split[1])
@@ -611,6 +635,12 @@ def create_shards(
         total_uncompressed_bytes += uncompressed_bytes
         if total_bytes > MAX_TOTAL_BYTES:
             raise ValueError(f"compressed upload exceeds {MAX_TOTAL_BYTES} bytes")
+        if total_uncompressed_bytes > MAX_WORKSPACE_UPLOAD_EXTRACTED_BYTES:
+            raise ValueError(
+                f"uncompressed upload is {total_uncompressed_bytes} bytes; "
+                "allowed maximum is "
+                f"{MAX_WORKSPACE_UPLOAD_EXTRACTED_BYTES} bytes"
+            )
 
     try:
         create_group(entries)
