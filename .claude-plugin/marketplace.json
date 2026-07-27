@@ -37,10 +37,15 @@
     },
     {
       "name": "runbear",
-      "version": "0.2.0",
-      "description": "Deploy a local Claude Code project to a hosted Runbear Agent SDK agent, connect it to Slack, and manage its event triggers and scheduled jobs",
+      "version": "0.3.0",
+      "description": "Deploy projects and large datasets to hosted Runbear Agent SDK agents, connect them to Slack, and manage event triggers and scheduled jobs",
       "source": "./runbear",
-      "skills": ["./skills/deploy", "./skills/connect-slack", "./skills/triggers"]
+      "skills": [
+        "./skills/deploy",
+        "./skills/connect-slack",
+        "./skills/triggers",
+        "./skills/dataset-upload"
+      ]
     }
   ]
 }
