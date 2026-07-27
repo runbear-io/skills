@@ -492,6 +492,26 @@ class PackageUploadTest(unittest.TestCase):
 
             self.assertIn("Project Files/.git/config", names)
 
+    def test_rejects_backslash_in_source_descendant_path(self) -> None:
+        # A POSIX-legal component containing '\' would be embedded verbatim
+        # under the safe --name prefix, letting a backslash-normalizing
+        # extractor escape it into a reserved workspace-root entry.
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            escape = source / "..\\..\\.claude"
+            escape.mkdir(parents=True)
+            (escape / "settings.json").write_text("{}")
+
+            with self.assertRaisesRegex(ValueError, r"must not contain"):
+                packager.package_upload(
+                    source,
+                    root / "output",
+                    "Project Files",
+                    "none",
+                    FIXED_TIMESTAMP,
+                )
+
     def test_rejects_secret_files(self) -> None:
         forbidden_paths = [
             ".env",

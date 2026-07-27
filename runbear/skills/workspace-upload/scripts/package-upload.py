@@ -178,6 +178,14 @@ def validate_relative_path(relative_path: str) -> None:
     basename = parts[-1]
     if any(part in {"", ".", ".."} for part in parts):
         raise ValueError(f"invalid relative path: {relative_path}")
+    # A component may legally contain a backslash on POSIX, but the archive is
+    # extracted elsewhere: an extractor that normalizes '\' would read
+    # 'safe/..\..\.claude' as traversal out of the layout prefix and into a
+    # reserved workspace-root entry. Refuse to build such an archive at all.
+    if "\\" in relative_path:
+        raise ValueError(f"path component must not contain '\\': {relative_path}")
+    if any(unicodedata.category(character) == "Cc" for character in relative_path):
+        raise ValueError(f"path must not contain control characters: {relative_path}")
     if (
         basename in FORBIDDEN_BASENAMES
         or basename == ".env"
