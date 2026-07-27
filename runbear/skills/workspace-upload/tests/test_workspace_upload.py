@@ -423,10 +423,15 @@ class PackageUploadTest(unittest.TestCase):
                         (inferred_entry / "report.txt").write_text("content")
                         requested_name = None
 
-                    with self.assertRaisesRegex(
-                        ValueError,
-                        "layout name must not contain",
-                    ):
+                    # An explicit name is refused by the layout-name check; an
+                    # inferred one is refused earlier, by the source path check
+                    # that now rejects a backslash in any component.
+                    expected = (
+                        "layout name must not contain"
+                        if case == "explicit"
+                        else r"path component must not contain"
+                    )
+                    with self.assertRaisesRegex(ValueError, expected):
                         packager.package_upload(
                             source,
                             root / "output",
