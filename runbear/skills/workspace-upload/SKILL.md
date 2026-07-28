@@ -31,7 +31,7 @@ Parse the arguments into:
 - `target`: `--agent`, accepting an agent UUID, Runbear agent URL, or unambiguous agent name.
 - `layoutName`: optional `--name`. This is a workspace directory name, not a transfer identifier. Preserve it verbatim, including uppercase letters, spaces, underscores, and non-ASCII characters. The helper validates filesystem safety.
 - `compression`: optional `--compression`, defaulting to `auto`. Accepted values are `auto`, `zstd`, `gzip`, and `none`.
-- `overwrite`: false unless `--overwrite` is present. When true, existing top-level entries with the same names are replaced.
+- `overwrite`: false unless `--overwrite` is present. Extraction is per file, so `--overwrite` replaces only the individual files the archive carries. A file already in the workspace that the archive does not contain is left alone, even when it sits inside a directory the upload writes into. Without `--overwrite`, the first file that already exists fails the upload.
 
 If a required input is missing, ask only for that value. Resolve an agent name with `list_agents`; never guess when more than one agent matches. The backend validates UUIDs and URLs.
 
@@ -111,7 +111,7 @@ Record the returned `jobId`. Finalization only enqueues extraction; it does not 
 Call `get_workspace_upload_status` with the same `agentId` and `uploadId` until:
 
 - `completed`: report the returned `workspacePaths`, then delete the local output directory.
-- `failed`: report `failedReason` and keep local shards so the user can inspect them or restart with a new upload ID.
+- `failed`: report `failedReason` and keep local shards so the user can inspect them or restart with a new upload ID. A failed upload is not rolled back: files extracted before the failure remain in the workspace. The one exception is a detected secret, where the server removes the offending file and everything that upload created.
 - another state: wait with bounded backoff, starting at 5 seconds and capping at 30 seconds.
 
 Never announce success before the state is `completed`.
