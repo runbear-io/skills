@@ -38,13 +38,13 @@
     {
       "name": "runbear",
       "version": "0.3.0",
-      "description": "Deploy projects and large datasets to hosted Runbear Agent SDK agents, connect them to Slack, and manage event triggers and scheduled jobs",
+      "description": "Deploy projects and transfer large files to hosted Runbear Agent SDK workspaces, connect agents to Slack, and manage event triggers and scheduled jobs",
       "source": "./runbear",
       "skills": [
         "./skills/deploy",
         "./skills/connect-slack",
         "./skills/triggers",
-        "./skills/dataset-upload"
+        "./skills/workspace-upload"
       ]
     }
   ]

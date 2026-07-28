@@ -18,3 +18,7 @@ npm-debug.log*
 .env.local
 
 .omc/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
